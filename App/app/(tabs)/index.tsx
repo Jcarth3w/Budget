@@ -1,39 +1,26 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback } from "react";
 import {
   View,
   Text,
   ScrollView,
   StyleSheet,
   ActivityIndicator,
-  Pressable,
+  Animated,
+  RefreshControl,
 } from "react-native";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-} from "react-native-reanimated";
+import { useBudget } from "@/hooks/useBudget";
+import { CATEGORY_BY_KEY } from "../../constants/categories";
+import { fmt, formatMonthYear } from "@/utils/format";
 
-SplashScreen.preventAutoHideAsync(); // Keep splash until fonts load
+SplashScreen.preventAutoHideAsync();
 
-const SHEET_ID = "10OZYDI7qBnCSsTnSVvu-1kAoyPbSstttmKY4jouvNUs";
-const API_KEY = "AIzaSyBsu79gNzGMkBeJx0iywf5plz4JC9qJtHw";
+const NEEDS_KEYS = ["gas", "phone", "medical", "car", "apartment", "groceries"];
+const WANTS_KEYS = ["entertainment", "food"];
 
-const TITLE_RANGE = "Sheet2!B1";
-const DATA_RANGE = "Sheet2!B2:D4";
-const title_url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${TITLE_RANGE}?key=${API_KEY}`;
-const data_url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${DATA_RANGE}?key=${API_KEY}`;
-
-export default function Index() {
-  const [data, setData] = useState<{
-    needs?: { budgeted: string; remaining: string };
-    wants?: { budgeted: string; remaining: string };
-    investments?: { budgeted: string; remaining: string };
-  }>({});
-  const [title, setTitle] = useState<string>("Budget");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+export default function HomeScreen() {
+  const { data, loading, refreshing, error, refresh, fadeAnim, slideAnim } = useBudget();
 
   const [fontsLoaded] = useFonts({
     Poppins: require("../../assets/fonts/Poppins-Regular.ttf"),
@@ -41,71 +28,7 @@ export default function Index() {
   });
 
   const onLayoutRootView = useCallback(async () => {
-    if (fontsLoaded) {
-      await SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded]);
-
-  // ✅ Animation logic
-  const scale = useSharedValue(1);
-
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ scale: scale.value }],
-    };
-  });
-
-  const handleTap = () => {
-    scale.value = withSpring(1.1, { damping: 3, stiffness: 120 }, () => {
-      scale.value = withSpring(1);
-    });
-  };
-
-  useEffect(() => {
-    if (!fontsLoaded) return;
-
-    console.log("📡 Fetching from sheets...");
-
-    const fetchTitle = fetch(title_url).then((res) => res.json());
-    const fetchData = fetch(data_url).then((res) => res.json());
-
-    Promise.all([fetchTitle, fetchData])
-      .then(([titleJson, dataJson]) => {
-        console.log("✅ Title:", titleJson);
-        console.log("✅ Budget Data:", dataJson);
-
-        if (titleJson.values?.[0]?.[0]) {
-          setTitle(titleJson.values[0][0]);
-        }
-
-        const values = dataJson.values || [];
-        if (values.length < 3) throw new Error("Unexpected data format");
-
-        const [headers, budgeted, remaining] = values;
-
-        const parsed = {
-          needs: {
-            budgeted: budgeted[0],
-            remaining: remaining[0],
-          },
-          wants: {
-            budgeted: budgeted[1],
-            remaining: remaining[1],
-          },
-          investments: {
-            budgeted: budgeted[2],
-            remaining: remaining[2],
-          },
-        };
-
-        setData(parsed);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error("Fetch error:", err);
-        setError("Failed to load data.");
-        setLoading(false);
-      });
+    if (fontsLoaded) await SplashScreen.hideAsync();
   }, [fontsLoaded]);
 
   if (!fontsLoaded) return null;
@@ -113,122 +36,197 @@ export default function Index() {
   if (loading) {
     return (
       <View style={styles.loadingContainer} onLayout={onLayoutRootView}>
-        <ActivityIndicator size="large" color="#6366F1" />
-        <Text style={[styles.loadingText, { fontFamily: "Poppins" }]}>
-          Loading your budget...
-        </Text>
+        <ActivityIndicator size="large" color="#7DF9C2" />
+        <Text style={styles.loadingText}>Loading budget...</Text>
       </View>
     );
   }
 
+  const earned = data?.earned ?? 0;
+  const spent = data?.spent ?? 0;
+  const remaining = data?.remaining ?? 0;
+  const breakdown = data?.breakdown ?? {};
+  const targets = data?.budget503020 ?? { needs: 0, wants: 0, investments: 0 };
+
+  const needsSpent = NEEDS_KEYS.reduce((sum, k) => sum + ((breakdown as any)[k] ?? 0), 0);
+  const wantsSpent = WANTS_KEYS.reduce((sum, k) => sum + ((breakdown as any)[k] ?? 0), 0);
+  const spentPercent = earned > 0 ? Math.min((spent / earned) * 100, 100) : 0;
+
   return (
     <ScrollView
+      style={styles.scroll}
       contentContainerStyle={styles.container}
       onLayout={onLayoutRootView}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#7DF9C2" />
+      }
     >
-      <Pressable onPress={handleTap}>
-        <Animated.Text style={[styles.title, animatedStyle]}>
-          💸 {title} Budget
-        </Animated.Text>
-      </Pressable>
+      <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
 
-      {error && <Text style={styles.error}>{error}</Text>}
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.monthLabel}>{formatMonthYear(new Date())}</Text>
+          <Text style={styles.title}>Budget</Text>
+        </View>
 
-      <View style={styles.card}>
-        <Text style={styles.header}>Needs</Text>
-        <Text style={styles.label}>Budgeted</Text>
-        <Text style={styles.needs}>{data.needs?.budgeted || "—"}</Text>
-        <Text style={styles.label}>Remaining</Text>
-        <Text style={styles.needs}>{data.needs?.remaining || "—"}</Text>
-      </View>
+        {/* Main balance card */}
+        <View style={styles.balanceCard}>
+          <Text style={styles.balanceLabel}>Earned This Month</Text>
+          <Text style={styles.balanceAmount}>{fmt(earned)}</Text>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${spentPercent}%` }]} />
+          </View>
+          <View style={styles.progressLabels}>
+            <Text style={styles.progressText}>Spent {fmt(spent)}</Text>
+            <Text style={[styles.progressText, { color: remaining >= 0 ? "#7DF9C2" : "#FF6B6B" }]}>
+              {remaining >= 0 ? "Remaining" : "Over"} {fmt(remaining)}
+            </Text>
+          </View>
+        </View>
 
-      <View style={styles.card}>
-        <Text style={styles.header}>Wants</Text>
-        <Text style={styles.label}>Budgeted</Text>
-        <Text style={styles.wants}>{data.wants?.budgeted || "—"}</Text>
-        <Text style={styles.label}>Remaining</Text>
-        <Text style={styles.wants}>{data.wants?.remaining || "—"}</Text>
-      </View>
+        {/* 50/30/20 Buckets */}
+        <Text style={styles.sectionTitle}>50 / 30 / 20</Text>
+        <View style={styles.bucketsRow}>
+          <BucketCard label="Needs"  target={targets.needs}       spent={needsSpent} color="#7DF9C2" />
+          <BucketCard label="Wants"  target={targets.wants}       spent={wantsSpent} color="#FFD166" />
+          <BucketCard label="Invest" target={targets.investments} spent={0}          color="#A78BFA" noSpend />
+        </View>
 
-      <View style={styles.card}>
-        <Text style={styles.header}>Investments</Text>
-        <Text style={styles.label}>Budgeted</Text>
-        <Text style={styles.investments}>{data.investments?.budgeted || "—"}</Text>
-      </View>
+        {/* Category breakdown */}
+        <Text style={styles.sectionTitle}>Breakdown</Text>
+        <View style={styles.breakdownGrid}>
+          {Object.entries(breakdown).map(([key, amount]) => {
+            const cat = CATEGORY_BY_KEY[key];
+            if (!cat) return null;
+            return (
+              <View key={key} style={styles.breakdownItem}>
+                <Text style={styles.breakdownEmoji}>{cat.emoji}</Text>
+                <Text style={styles.breakdownLabel}>{cat.label}</Text>
+                <Text style={styles.breakdownAmount}>{fmt(amount as number)}</Text>
+              </View>
+            );
+          })}
+        </View>
+
+        {error && <Text style={styles.error}>{error}</Text>}
+
+      </Animated.View>
     </ScrollView>
   );
 }
 
+type BucketCardProps = {
+  label: string;
+  target: number;
+  spent: number;
+  color: string;
+  noSpend?: boolean;
+};
+
+function BucketCard({ label, target, spent, color, noSpend }: BucketCardProps) {
+  const remaining = target - spent;
+  const percent = target > 0 ? Math.min((spent / target) * 100, 100) : 0;
+
+  return (
+    <View style={[styles.bucketCard, { borderTopColor: color }]}>
+      <Text style={[styles.bucketLabel, { color }]}>{label}</Text>
+      <Text style={styles.bucketTarget}>{fmt(target)}</Text>
+      {!noSpend && (
+        <>
+          <View style={styles.bucketTrack}>
+            <View style={[styles.bucketFill, { width: `${percent}%`, backgroundColor: color }]} />
+          </View>
+          <Text style={styles.bucketRemaining}>
+            {remaining >= 0 ? `${fmt(remaining)} left` : `${fmt(Math.abs(remaining))} over`}
+          </Text>
+        </>
+      )}
+      {noSpend && <Text style={styles.bucketRemaining}>Target</Text>}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    padding: 24,
-    paddingTop: 60,
-    backgroundColor: "#F0F4FF",
-    flexGrow: 1,
-    alignItems: "center",
-    gap: 20,
-  },
+  scroll: { flex: 1, backgroundColor: "#0D0D0F" },
+  container: { padding: 24, paddingTop: 64, paddingBottom: 40 },
   loadingContainer: {
     flex: 1,
+    backgroundColor: "#0D0D0F",
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#F0F4FF",
+    gap: 12,
   },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 18,
-    color: "#1E3A8A",
+  loadingText: { color: "#7DF9C2", fontFamily: "Poppins", fontSize: 16 },
+  header: { marginBottom: 28 },
+  monthLabel: {
+    fontFamily: "Poppins",
+    fontSize: 13,
+    color: "#555",
+    letterSpacing: 2,
+    textTransform: "uppercase",
   },
-  title: {
-    fontSize: 44,
-    fontWeight: "800",
-    color: "#1E3A8A",
-    fontFamily: "PoppinsBold",
-  },
-  error: {
-    color: "red",
-    marginVertical: 10,
-  },
-  card: {
-    backgroundColor: "#E0E7FF",
-    width: "100%",
-    borderRadius: 16,
+  title: { fontFamily: "PoppinsBold", fontSize: 40, color: "#F0F0F0", lineHeight: 46 },
+  balanceCard: {
+    backgroundColor: "#16161A",
+    borderRadius: 20,
     padding: 24,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 6,
-    elevation: 3,
+    marginBottom: 28,
+    borderWidth: 1,
+    borderColor: "#222",
   },
-  header: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#1E3A8A",
+  balanceLabel: {
+    fontFamily: "Poppins",
+    fontSize: 13,
+    color: "#666",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  balanceAmount: { fontFamily: "PoppinsBold", fontSize: 38, color: "#F0F0F0", marginBottom: 20 },
+  progressTrack: {
+    height: 6,
+    backgroundColor: "#222",
+    borderRadius: 3,
+    overflow: "hidden",
+    marginBottom: 10,
+  },
+  progressFill: { height: "100%", backgroundColor: "#7DF9C2", borderRadius: 3 },
+  progressLabels: { flexDirection: "row", justifyContent: "space-between" },
+  progressText: { fontFamily: "Poppins", fontSize: 13, color: "#666" },
+  sectionTitle: {
     fontFamily: "PoppinsBold",
+    fontSize: 16,
+    color: "#444",
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    marginBottom: 14,
   },
-  label: {
-    fontSize: 14,
-    color: "#64748B",
-    marginTop: 8,
-    fontFamily: "Poppins",
+  bucketsRow: { flexDirection: "row", gap: 10, marginBottom: 32 },
+  bucketCard: {
+    flex: 1,
+    backgroundColor: "#16161A",
+    borderRadius: 16,
+    padding: 14,
+    borderTopWidth: 3,
+    borderWidth: 1,
+    borderColor: "#222",
   },
-  needs: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#3B82F6",
-    fontFamily: "Poppins",
+  bucketLabel: { fontFamily: "PoppinsBold", fontSize: 12, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 },
+  bucketTarget: { fontFamily: "PoppinsBold", fontSize: 16, color: "#F0F0F0", marginBottom: 10 },
+  bucketTrack: { height: 4, backgroundColor: "#222", borderRadius: 2, overflow: "hidden", marginBottom: 6 },
+  bucketFill: { height: "100%", borderRadius: 2 },
+  bucketRemaining: { fontFamily: "Poppins", fontSize: 11, color: "#555" },
+  breakdownGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 24 },
+  breakdownItem: {
+    width: "47%",
+    backgroundColor: "#16161A",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#222",
   },
-  wants: {
-    fontSize: 24,
-    fontWeight: "600",
-    color: "#6366F1",
-    fontFamily: "Poppins",
-  },
-  investments: {
-    fontSize: 20,
-    fontWeight: "500",
-    color: "#06B6D4",
-    fontFamily: "Poppins",
-  },
+  breakdownEmoji: { fontSize: 22, marginBottom: 6 },
+  breakdownLabel: { fontFamily: "Poppins", fontSize: 12, color: "#666", marginBottom: 2 },
+  breakdownAmount: { fontFamily: "PoppinsBold", fontSize: 18, color: "#F0F0F0" },
+  error: { color: "#FF6B6B", fontFamily: "Poppins", fontSize: 14, textAlign: "center", marginTop: 12 },
 });
