@@ -148,7 +148,7 @@ function BucketCard({ label, target, spent, color, noSpend }: BucketCardProps) {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: "#0D0D0F" },
-  container: { padding: 24, paddingTop: 64, paddingBottom: 40 },
+  container: { padding: 24, paddingTop: 64, paddingBottom: 120 },
   loadingContainer: {
     flex: 1,
     backgroundColor: "#0D0D0F",

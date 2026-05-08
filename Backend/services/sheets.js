@@ -1,12 +1,22 @@
 import { google } from 'googleapis';
+import fs from 'fs';
 
 const SHEET_ID = process.env.SHEET_ID;
 const SHEET_NAME = '2026';
+const CREDENTIALS_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS || 'credentials.json';
+
+if (!SHEET_ID) {
+  throw new Error('Missing SHEET_ID environment variable. Add SHEET_ID=your_google_sheet_id to your .env file.');
+}
+
+if (!fs.existsSync(CREDENTIALS_PATH)) {
+  throw new Error(`Google credentials file not found at ${CREDENTIALS_PATH}. Set GOOGLE_APPLICATION_CREDENTIALS in .env or place credentials.json in the backend root.`);
+}
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 const auth = new google.auth.GoogleAuth({
-  keyFile: 'credentials.json',
+  keyFile: CREDENTIALS_PATH,
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
@@ -56,52 +66,67 @@ export async function getSheetRows() {
 
 // Returns monthly totals for the current month
 export async function getMonthlyData() {
-  const { rows } = await getSheetRows();
+  try {
+    const { rows } = await getSheetRows();
+    console.log('📊 Found', rows.length, 'rows in sheet');
 
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    console.log('📅 Filtering for', currentMonth + 1, '/', currentYear);
 
-  let totalEarned = 0;
-  const totals = { G: 0, H: 0, I: 0, J: 0, K: 0, L: 0, M: 0, N: 0 };
+    let totalEarned = 0;
+    const totals = { G: 0, H: 0, I: 0, J: 0, K: 0, L: 0, M: 0, N: 0 };
 
-  for (const row of rows) {
-    if (!row[0]) continue;
-    const date = new Date(row[0]);
-    if (isNaN(date)) continue;
-    if (date.getMonth() !== currentMonth || date.getFullYear() !== currentYear) continue;
+    let matchingRows = 0;
+    for (const row of rows) {
+      if (!row[0]) continue;
+      const date = new Date(row[0]);
+      if (isNaN(date)) continue;
+      if (date.getMonth() !== currentMonth || date.getFullYear() !== currentYear) continue;
 
-    // Column D (index 3) = paychecks
-    totalEarned += parseFloat(row[3]) || 0;
+      matchingRows++;
+      // Column D (index 3) = paychecks
+      totalEarned += parseFloat(row[3]) || 0;
 
-    // Spending columns G-N (indices 6-13)
-    for (const col of Object.keys(totals)) {
-      totals[col] += parseFloat(row[colLetterToIndex(col)]) || 0;
+      // Spending columns G-N (indices 6-13)
+      for (const col of Object.keys(totals)) {
+        totals[col] += parseFloat(row[colLetterToIndex(col)]) || 0;
+      }
     }
+
+    console.log('💰 Found', matchingRows, 'rows for current month');
+    console.log('💵 Total earned:', totalEarned);
+
+    const totalSpent = Object.values(totals).reduce((a, b) => a + b, 0);
+
+    const result = {
+      earned: totalEarned,
+      spent: totalSpent,
+      remaining: totalEarned - totalSpent,
+      breakdown: {
+        entertainment: totals['G'],
+        food: totals['H'],
+        gas: totals['I'],
+        phone: totals['J'],
+        medical: totals['K'],
+        car: totals['L'],
+        apartment: totals['M'],
+        groceries: totals['N'],
+      },
+      budget503020: {
+        needs: totalEarned * 0.5,
+        wants: totalEarned * 0.3,
+        investments: totalEarned * 0.2,
+      },
+    };
+
+    console.log('📈 Returning data:', result);
+    return result;
+  } catch (err) {
+    console.error('❌ getMonthlyData error:', err);
+    throw err;
   }
-
-  const totalSpent = Object.values(totals).reduce((a, b) => a + b, 0);
-
-  return {
-    earned: totalEarned,
-    spent: totalSpent,
-    remaining: totalEarned - totalSpent,
-    breakdown: {
-      entertainment: totals['G'],
-      food: totals['H'],
-      gas: totals['I'],
-      phone: totals['J'],
-      medical: totals['K'],
-      car: totals['L'],
-      apartment: totals['M'],
-      groceries: totals['N'],
-    },
-    budget503020: {
-      needs: totalEarned * 0.5,
-      wants: totalEarned * 0.3,
-      investments: totalEarned * 0.2,
-    },
-  };
 }
 
 // ─── Writes ───────────────────────────────────────────────────────────────────

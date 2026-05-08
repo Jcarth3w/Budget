@@ -125,7 +125,7 @@ export default function AddScreen() {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: "#0D0D0F" },
-  container: { padding: 24, paddingTop: 64, paddingBottom: 60 },
+  container: { padding: 24, paddingTop: 64, paddingBottom: 120 },
   header: { marginBottom: 32 },
   eyebrow: {
     fontFamily: "Poppins",

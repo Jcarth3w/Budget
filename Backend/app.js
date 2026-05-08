@@ -1,6 +1,9 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import budgetRouter from './routes/budget.js';
 import transactionRouter from './routes/transaction.js';
+
+dotenv.config();
 
 const app = express();
 

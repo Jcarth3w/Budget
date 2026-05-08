@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "budgetapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.BudgetApp"
