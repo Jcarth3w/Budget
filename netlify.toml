@@ -1,0 +1,8 @@
+# Expo web export lives in App/ — set Base directory in UI to match, or rely on this file.
+[build]
+  base = "App"
+  command = "npm ci && npx expo export -p web"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
