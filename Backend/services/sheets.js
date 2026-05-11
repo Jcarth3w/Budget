@@ -4,7 +4,6 @@ import { createLogger } from '../utils/logger.js';
 
 const SHEET_ID = process.env.SHEET_ID;
 const SHEET_NAME = '2026';
-const CREDENTIALS_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS || 'credentials.json';
 
 const baseLog = createLogger('services:sheets');
 
@@ -13,23 +12,67 @@ if (!SHEET_ID) {
   throw new Error('Missing SHEET_ID environment variable. Add SHEET_ID=your_google_sheet_id to your .env file.');
 }
 
-if (!fs.existsSync(CREDENTIALS_PATH)) {
-  baseLog.error('Google credentials file not found', { path: CREDENTIALS_PATH });
-  throw new Error(`Google credentials file not found at ${CREDENTIALS_PATH}. Set GOOGLE_APPLICATION_CREDENTIALS in .env or place credentials.json in the backend root.`);
+/**
+ * Railway / cloud: use GOOGLE_SERVICE_ACCOUNT_JSON (full JSON) or GOOGLE_CREDENTIALS_B64 (base64 JSON).
+ * Local: credentials.json or GOOGLE_APPLICATION_CREDENTIALS=/absolute/or/relative/path/to/key.json
+ *
+ * GOOGLE_APPLICATION_CREDENTIALS must be a path on disk, not JSON text and not Railway's internal secret id.
+ */
+function resolveGoogleAuthOptions(log) {
+  const jsonRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+  if (jsonRaw) {
+    try {
+      const credentials = JSON.parse(jsonRaw);
+      return {
+        options: { credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
+        meta: { authMode: 'GOOGLE_SERVICE_ACCOUNT_JSON' },
+      };
+    } catch (e) {
+      throw new Error(`GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON: ${e.message}`);
+    }
+  }
+
+  const b64 = process.env.GOOGLE_CREDENTIALS_B64?.trim();
+  if (b64) {
+    try {
+      const json = Buffer.from(b64, 'base64').toString('utf8');
+      const credentials = JSON.parse(json);
+      return {
+        options: { credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
+        meta: { authMode: 'GOOGLE_CREDENTIALS_B64' },
+      };
+    } catch (e) {
+      throw new Error(`GOOGLE_CREDENTIALS_B64 could not be decoded to valid JSON: ${e.message}`);
+    }
+  }
+
+  const keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS || 'credentials.json';
+  if (!fs.existsSync(keyFile)) {
+    log.error('Google credentials file not found', { path: keyFile });
+    throw new Error(
+      'No Google credentials configured. On Railway, add variable GOOGLE_SERVICE_ACCOUNT_JSON with the full service ' +
+        'account JSON, or GOOGLE_CREDENTIALS_B64 (base64 of that JSON). Locally, use credentials.json in the Backend ' +
+        `folder or set GOOGLE_APPLICATION_CREDENTIALS to a real file path. (Missing file: ${keyFile})`
+    );
+  }
+
+  return {
+    options: { keyFile, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
+    meta: { authMode: 'keyFile', credentialsPath: keyFile },
+  };
 }
+
+const { options: googleAuthOptions, meta: authMeta } = resolveGoogleAuthOptions(baseLog);
 
 baseLog.info('Sheets service initialized', {
   sheetId: SHEET_ID,
   sheetName: SHEET_NAME,
-  credentialsPath: CREDENTIALS_PATH,
+  ...authMeta,
 });
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-const auth = new google.auth.GoogleAuth({
-  keyFile: CREDENTIALS_PATH,
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
+const auth = new google.auth.GoogleAuth(googleAuthOptions);
 
 async function getSheets(log = baseLog) {
   log.debug('Getting Google Sheets client');

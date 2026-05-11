@@ -6,3 +6,5 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Required for the app to load data on the deployed site: HTTPS API origin, no trailing slash.
+  # EXPO_PUBLIC_BUDGET_API_URL = "https://your-budget-api.example.com"
