@@ -13,10 +13,12 @@ if (!SHEET_ID) {
 }
 
 /**
- * Railway / cloud: use GOOGLE_SERVICE_ACCOUNT_JSON (full JSON) or GOOGLE_CREDENTIALS_B64 (base64 JSON).
- * Local: credentials.json or GOOGLE_APPLICATION_CREDENTIALS=/absolute/or/relative/path/to/key.json
- *
- * GOOGLE_APPLICATION_CREDENTIALS must be a path on disk, not JSON text and not Railway's internal secret id.
+ * Credentials (first match wins):
+ * - GOOGLE_SERVICE_ACCOUNT_JSON — full service account JSON (recommended on Railway).
+ * - GOOGLE_CREDENTIALS_B64 — base64 of that JSON.
+ * - GOOGLE_APPLICATION_CREDENTIALS — either a filesystem path to the .json file, OR the same JSON
+ *   pasted inline (many hosts use this name; we detect `{` and parse as JSON).
+ * - Default file: credentials.json in the Backend cwd.
  */
 function resolveGoogleAuthOptions(log) {
   const jsonRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
@@ -46,19 +48,50 @@ function resolveGoogleAuthOptions(log) {
     }
   }
 
-  const keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS || 'credentials.json';
-  if (!fs.existsSync(keyFile)) {
-    log.error('Google credentials file not found', { path: keyFile });
+  const gac = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+  if (gac) {
+    if (gac.startsWith('{')) {
+      try {
+        const credentials = JSON.parse(gac);
+        return {
+          options: { credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
+          meta: { authMode: 'GOOGLE_APPLICATION_CREDENTIALS_json' },
+        };
+      } catch (e) {
+        throw new Error(
+          `GOOGLE_APPLICATION_CREDENTIALS starts with "{" but is not valid JSON (${e.message}). ` +
+            'Fix the value or use a file path to your key file.'
+        );
+      }
+    }
+
+    if (fs.existsSync(gac)) {
+      return {
+        options: { keyFile: gac, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
+        meta: { authMode: 'keyFile', credentialsPath: gac },
+      };
+    }
+
+    log.error('Google credentials file not found', { path: gac });
     throw new Error(
-      'No Google credentials configured. On Railway, add variable GOOGLE_SERVICE_ACCOUNT_JSON with the full service ' +
-        'account JSON, or GOOGLE_CREDENTIALS_B64 (base64 of that JSON). Locally, use credentials.json in the Backend ' +
-        `folder or set GOOGLE_APPLICATION_CREDENTIALS to a real file path. (Missing file: ${keyFile})`
+      `GOOGLE_APPLICATION_CREDENTIALS is set to a path that does not exist: ${gac}. ` +
+        'Use a real path to your .json key file, paste the full service account JSON (object starting with "{"), ' +
+        'or set GOOGLE_SERVICE_ACCOUNT_JSON instead.'
+    );
+  }
+
+  const defaultPath = 'credentials.json';
+  if (!fs.existsSync(defaultPath)) {
+    log.error('Google credentials file not found', { path: defaultPath });
+    throw new Error(
+      'No Google credentials: set GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_CREDENTIALS_B64, ' +
+        'GOOGLE_APPLICATION_CREDENTIALS (path or inline JSON), or add credentials.json in the Backend folder.'
     );
   }
 
   return {
-    options: { keyFile, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
-    meta: { authMode: 'keyFile', credentialsPath: keyFile },
+    options: { keyFile: defaultPath, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
+    meta: { authMode: 'keyFile', credentialsPath: defaultPath },
   };
 }
 
