@@ -20,7 +20,12 @@ router.get('/', async (req, res) => {
     res.json(data);
   } catch (err) {
     log.error('GET /budget failed', { message: err.message, stack: err.stack });
-    res.status(500).json({ error: 'Failed to read sheet' });
+    const authFailed = /invalid_grant|invalid jwt|unauthorized/i.test(err.message || '');
+    res.status(500).json({
+      error: authFailed
+        ? 'Google rejected the service account key. Create a new JSON key (Keys → Add key) and replace Backend/credentials.json, then restart the server.'
+        : 'Failed to read sheet',
+    });
   }
 });
 

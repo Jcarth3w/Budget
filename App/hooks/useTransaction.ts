@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from "react";
 import { Animated } from "react-native";
 import SERVER_URL from "@/config/server";
 import { CATEGORY_BY_COL } from "../constants/categories";
+import { notifyBudgetChanged } from "./useBudget";
 
 export function useTransaction() {
   const [amount, setAmount] = useState("");
@@ -59,6 +60,7 @@ export function useTransaction() {
     try {
       const res = await fetch(`${SERVER_URL}/transaction`, {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           amount: parseFloat(amount),
@@ -72,6 +74,7 @@ export function useTransaction() {
 
       const categoryLabel = CATEGORY_BY_COL[selectedCategory]?.label ?? selectedCategory;
       showSuccess(`$${parseFloat(amount).toFixed(2)} added to ${categoryLabel}`);
+      notifyBudgetChanged();
       reset();
     } catch (err: any) {
       setStatus({ type: "error", message: err.message });

@@ -3,7 +3,7 @@ import fs from 'fs';
 import { createLogger } from '../utils/logger.js';
 
 const SHEET_ID = process.env.SHEET_ID;
-const SHEET_NAME = '2026';
+const SHEET_NAME = process.env.SHEET_NAME;
 
 const baseLog = createLogger('services:sheets');
 

@@ -1,6 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Animated } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import SERVER_URL from "@/config/server";
+
+type RefreshListener = () => void;
+const refreshListeners = new Set<RefreshListener>();
+
+/** Call after a transaction is written so the Budget tab reloads totals. */
+export function notifyBudgetChanged() {
+  refreshListeners.forEach((listener) => listener());
+}
 
 export type BudgetBreakdown = {
   entertainment: number;
@@ -51,21 +60,45 @@ export function useBudget() {
 
   const fetchBudget = useCallback(async () => {
     try {
-      const res = await fetch(`${SERVER_URL}/budget`);
-      const json = await res.json();
+      const res = await fetch(`${SERVER_URL}/budget`, { cache: "no-store" });
+      if (res.status === 304) {
+        setError(null);
+        return;
+      }
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json.error || `Could not load budget (${res.status})`);
+      }
       setData(json);
       setError(null);
       animateIn();
-    } catch (err) {
-      setError("Could not reach server.");
+    } catch (err: any) {
+      const msg = String(err?.message || "");
+      const unreachable =
+        msg === "Failed to fetch" ||
+        msg.includes("Network request failed") ||
+        msg.includes("Load failed");
+      setError(unreachable ? "Could not reach server." : msg || "Could not load budget.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [animateIn]);
 
+  useFocusEffect(
+    useCallback(() => {
+      fetchBudget();
+    }, [fetchBudget])
+  );
+
   useEffect(() => {
-    fetchBudget();
+    const listener = () => {
+      fetchBudget();
+    };
+    refreshListeners.add(listener);
+    return () => {
+      refreshListeners.delete(listener);
+    };
   }, [fetchBudget]);
 
   const refresh = useCallback(() => {

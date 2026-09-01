@@ -42,6 +42,23 @@ export default function HomeScreen() {
     );
   }
 
+  if (error && !data) {
+    return (
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.loadingContainer}
+        onLayout={onLayoutRootView}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#7DF9C2" />
+        }
+      >
+        <Text style={styles.errorTitle}>Couldn’t load budget</Text>
+        <Text style={styles.error}>{error}</Text>
+        <Text style={styles.retryHint}>Pull down to retry</Text>
+      </ScrollView>
+    );
+  }
+
   const earned = data?.earned ?? 0;
   const spent = data?.spent ?? 0;
   const remaining = data?.remaining ?? 0;
@@ -228,5 +245,27 @@ const styles = StyleSheet.create({
   breakdownEmoji: { fontSize: 22, marginBottom: 6 },
   breakdownLabel: { fontFamily: "Poppins", fontSize: 12, color: "#666", marginBottom: 2 },
   breakdownAmount: { fontFamily: "PoppinsBold", fontSize: 18, color: "#F0F0F0" },
-  error: { color: "#FF6B6B", fontFamily: "Poppins", fontSize: 14, textAlign: "center", marginTop: 12 },
+  errorTitle: {
+    fontFamily: "PoppinsBold",
+    fontSize: 20,
+    color: "#F0F0F0",
+    textAlign: "center",
+    marginBottom: 8,
+    paddingHorizontal: 24,
+  },
+  error: {
+    color: "#FF6B6B",
+    fontFamily: "Poppins",
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 12,
+    paddingHorizontal: 24,
+  },
+  retryHint: {
+    color: "#555",
+    fontFamily: "Poppins",
+    fontSize: 13,
+    textAlign: "center",
+    marginTop: 16,
+  },
 });

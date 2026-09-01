@@ -10,7 +10,22 @@ dotenv.config();
 const app = express();
 const log = createLogger('http');
 
+// Fresh GETs must not 304 — the web app needs a JSON body every time.
+app.set('etag', false);
+
 app.use(express.json());
+
+// Expo web (localhost:8081) and native clients call this API from another origin.
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-request-id');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 // Attach a per-request id and log every request in / out so we can trace
 // a single call all the way through the route -> service -> Google Sheets chain.
