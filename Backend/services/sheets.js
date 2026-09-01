@@ -159,6 +159,8 @@ export async function getSheetRows({ log = baseLog } = {}) {
 // Returns monthly totals for the current month
 export async function getMonthlyData({ log = baseLog } = {}) {
   const scoped = log.child ? log.child('getMonthlyData') : log;
+
+  //break this block into smaller functions?
   try {
     const { rows } = await getSheetRows({ log: scoped });
     scoped.info('Found rows in sheet', { rowCount: rows.length });
@@ -171,9 +173,12 @@ export async function getMonthlyData({ log = baseLog } = {}) {
       year: currentYear,
     });
 
+
     let totalEarned = 0;
     const totals = { G: 0, H: 0, I: 0, J: 0, K: 0, L: 0, M: 0, N: 0 };
 
+    
+    //make it's own function?
     let matchingRows = 0;
     for (const row of rows) {
       if (!row[0]) continue;
@@ -191,10 +196,14 @@ export async function getMonthlyData({ log = baseLog } = {}) {
       }
     }
 
+
+
     scoped.info('Aggregated current month rows', {
       matchingRows,
       totalEarned,
     });
+
+
 
     const totalSpent = Object.values(totals).reduce((a, b) => a + b, 0);
 

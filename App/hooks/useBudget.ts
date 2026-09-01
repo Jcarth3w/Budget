@@ -34,6 +34,7 @@ export type BudgetData = {
   };
 };
 
+//break this into smaller functions?
 export function useBudget() {
   const [data, setData] = useState<BudgetData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,6 +60,8 @@ export function useBudget() {
   }, [fadeAnim, slideAnim]);
 
   const fetchBudget = useCallback(async () => {
+
+
     try {
       const res = await fetch(`${SERVER_URL}/budget`, { cache: "no-store" });
       if (res.status === 304) {
@@ -73,6 +76,9 @@ export function useBudget() {
       setError(null);
       animateIn();
     } catch (err: any) {
+
+
+
       const msg = String(err?.message || "");
       const unreachable =
         msg === "Failed to fetch" ||
