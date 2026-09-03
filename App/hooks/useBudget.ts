@@ -1,5 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Animated, Easing } from "react-native";
+import { useState, useEffect, useCallback } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import SERVER_URL from "@/config/server";
 
@@ -9,6 +8,13 @@ const refreshListeners = new Set<RefreshListener>();
 /** Call after a transaction is written so the Budget tab reloads totals. */
 export function notifyBudgetChanged() {
   refreshListeners.forEach((listener) => listener());
+}
+
+export function subscribeBudgetChanged(listener: RefreshListener) {
+  refreshListeners.add(listener);
+  return () => {
+    refreshListeners.delete(listener);
+  };
 }
 
 export type BudgetBreakdown = {
@@ -23,9 +29,13 @@ export type BudgetBreakdown = {
 };
 
 export type BudgetData = {
+  year: number;
+  month: number;
+  isCurrent: boolean;
   earned: number;
   spent: number;
   rollover: number;
+  rolloverFrom?: { month: number; year: number; label: string };
   available: number;
   remaining: number;
   breakdown: BudgetBreakdown;
@@ -41,40 +51,20 @@ export type BudgetData = {
   };
 };
 
-//break this into smaller functions?
-export function useBudget() {
+export function useBudget(view?: { month: number; year: number }) {
   const [data, setData] = useState<BudgetData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
-
-  const animateIn = useCallback(() => {
-    fadeAnim.setValue(0);
-    slideAnim.setValue(24);
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 700,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 700,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [fadeAnim, slideAnim]);
+  const month = view?.month;
+  const year = view?.year;
 
   const fetchBudget = useCallback(async () => {
-
-
     try {
-      const res = await fetch(`${SERVER_URL}/budget`, { cache: "no-store" });
+      const qs =
+        month != null && year != null ? `?month=${month}&year=${year}` : "";
+      const res = await fetch(`${SERVER_URL}/budget${qs}`, { cache: "no-store" });
       if (res.status === 304) {
         setError(null);
         return;
@@ -89,8 +79,12 @@ export function useBudget() {
       const available = json.available != null ? Number(json.available) : earned + rollover;
       const remaining =
         json.remaining != null ? Number(json.remaining) : available - spent;
+      const now = new Date();
       setData({
         ...json,
+        year: Number(json.year) || year || now.getFullYear(),
+        month: Number(json.month) || month || now.getMonth() + 1,
+        isCurrent: json.isCurrent !== false,
         earned,
         spent,
         rollover,
@@ -103,11 +97,7 @@ export function useBudget() {
         },
       });
       setError(null);
-      animateIn();
     } catch (err: any) {
-
-
-
       const msg = String(err?.message || "");
       const unreachable =
         msg === "Failed to fetch" ||
@@ -118,7 +108,7 @@ export function useBudget() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [animateIn]);
+  }, [month, year]);
 
   useFocusEffect(
     useCallback(() => {
@@ -126,20 +116,12 @@ export function useBudget() {
     }, [fetchBudget])
   );
 
-  useEffect(() => {
-    const listener = () => {
-      fetchBudget();
-    };
-    refreshListeners.add(listener);
-    return () => {
-      refreshListeners.delete(listener);
-    };
-  }, [fetchBudget]);
+  useEffect(() => subscribeBudgetChanged(fetchBudget), [fetchBudget]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
     fetchBudget();
   }, [fetchBudget]);
 
-  return { data, loading, refreshing, error, refresh, fadeAnim, slideAnim };
+  return { data, loading, refreshing, error, refresh };
 }

@@ -1,38 +1,30 @@
 export type Category = {
-  col: string;       // Column letter in the sheet
-  label: string;     // Display name
-  emoji: string;     // Icon
-  bucket: "needs" | "wants";  // Which 50/30/20 bucket it belongs to
+  key: string;
+  col: string;
+  label: string;
+  emoji: string;
+  bucket: "needs" | "wants";
+  color: string;
 };
 
 export const CATEGORIES: Category[] = [
-  { col: "G", label: "Entertainment", emoji: "🎮", bucket: "wants" },
-  { col: "H", label: "Food",          emoji: "🍔", bucket: "wants" },
-  { col: "I", label: "Gas",           emoji: "⛽", bucket: "needs" },
-  { col: "J", label: "Phone",         emoji: "📱", bucket: "needs" },
-  { col: "K", label: "Medical",       emoji: "🏥", bucket: "needs" },
-  { col: "L", label: "Car",           emoji: "🚗", bucket: "needs" },
-  { col: "M", label: "Apartment",     emoji: "🏠", bucket: "needs" },
-  { col: "N", label: "Groceries",     emoji: "🛒", bucket: "needs" },
+  { key: "entertainment", col: "G", label: "Entertainment", emoji: "🎮", bucket: "wants", color: "#A78BFA" },
+  { key: "food",          col: "H", label: "Food",          emoji: "🍔", bucket: "wants", color: "#FFD166" },
+  { key: "gas",           col: "I", label: "Gas",           emoji: "⛽", bucket: "needs", color: "#FF8A5B" },
+  { key: "phone",         col: "J", label: "Phone",         emoji: "📱", bucket: "needs", color: "#7DD3FC" },
+  { key: "medical",       col: "K", label: "Medical",       emoji: "🏥", bucket: "needs", color: "#FF6B6B" },
+  { key: "car",           col: "L", label: "Car",           emoji: "🚗", bucket: "needs", color: "#60A5FA" },
+  { key: "apartment",     col: "M", label: "Apartment",     emoji: "🏠", bucket: "needs", color: "#7DF9C2" },
+  { key: "groceries",     col: "N", label: "Groceries",     emoji: "🛒", bucket: "needs", color: "#34D399" },
 ];
 
-// Lookup by column letter
-export const CATEGORY_BY_COL = Object.fromEntries(
-  CATEGORIES.map((c) => [c.col, c])
+export const CATEGORY_KEYS = CATEGORIES.map((c) => c.key);
+
+export const CATEGORY_BY_COL = Object.fromEntries(CATEGORIES.map((c) => [c.col, c]));
+
+export const CATEGORY_BY_KEY: Record<string, Category> = Object.fromEntries(
+  CATEGORIES.map((c) => [c.key, c])
 );
 
-// Lookup by backend key (matches what /budget returns in breakdown)
-export const CATEGORY_BY_KEY: Record<string, Category> = {
-  entertainment: CATEGORIES[0],
-  food:          CATEGORIES[1],
-  gas:           CATEGORIES[2],
-  phone:         CATEGORIES[3],
-  medical:       CATEGORIES[4],
-  car:           CATEGORIES[5],
-  apartment:     CATEGORIES[6],
-  groceries:     CATEGORIES[7],
-};
-
-// Keys that belong to each bucket
-export const NEEDS_KEYS = CATEGORIES.filter(c => c.bucket === "needs").map(c => c.label.toLowerCase());
-export const WANTS_KEYS = CATEGORIES.filter(c => c.bucket === "wants").map(c => c.label.toLowerCase());
+export const NEEDS_KEYS = CATEGORIES.filter((c) => c.bucket === "needs").map((c) => c.key);
+export const WANTS_KEYS = CATEGORIES.filter((c) => c.bucket === "wants").map((c) => c.key);

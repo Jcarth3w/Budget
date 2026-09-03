@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
+import { resolveGoogleAuthOptions } from './sheetsConnection.js';
 
 const BACKEND_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -16,95 +17,12 @@ if (!SHEET_ID) {
   throw new Error('Missing SHEET_ID environment variable. Add SHEET_ID=your_google_sheet_id to your .env file.');
 }
 
+
 function resolveCredentialsPath(filePath) {
   if (path.isAbsolute(filePath)) return filePath;
   const fromCwd = path.resolve(process.cwd(), filePath);
   if (fs.existsSync(fromCwd)) return fromCwd;
   return path.resolve(BACKEND_ROOT, filePath);
-}
-
-/**
- * Credentials (first match wins):
- * - GOOGLE_SERVICE_ACCOUNT_JSON — full service account JSON (recommended on Railway).
- * - GOOGLE_CREDENTIALS_B64 — base64 of that JSON.
- * - GOOGLE_APPLICATION_CREDENTIALS — either a filesystem path to the .json file, OR the same JSON
- *   pasted inline (many hosts use this name; we detect `{` and parse as JSON).
- * - Default file: credentials.json in the Backend cwd.
- */
-function resolveGoogleAuthOptions(log) {
-  const jsonRaw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
-  if (jsonRaw) {
-    try {
-      const credentials = JSON.parse(jsonRaw);
-      return {
-        options: { credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
-        meta: { authMode: 'GOOGLE_SERVICE_ACCOUNT_JSON' },
-      };
-    } catch (e) {
-      throw new Error(`GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON: ${e.message}`);
-    }
-  }
-
-  const b64 = process.env.GOOGLE_CREDENTIALS_B64?.trim();
-  if (b64) {
-    try {
-      const json = Buffer.from(b64, 'base64').toString('utf8');
-      const credentials = JSON.parse(json);
-      return {
-        options: { credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
-        meta: { authMode: 'GOOGLE_CREDENTIALS_B64' },
-      };
-    } catch (e) {
-      throw new Error(`GOOGLE_CREDENTIALS_B64 could not be decoded to valid JSON: ${e.message}`);
-    }
-  }
-
-  const gac = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
-  if (gac) {
-    if (gac.startsWith('{')) {
-      try {
-        const credentials = JSON.parse(gac);
-        return {
-          options: { credentials, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
-          meta: { authMode: 'GOOGLE_APPLICATION_CREDENTIALS_json' },
-        };
-      } catch (e) {
-        throw new Error(
-          `GOOGLE_APPLICATION_CREDENTIALS starts with "{" but is not valid JSON (${e.message}). ` +
-            'Fix the value or use a file path to your key file.'
-        );
-      }
-    }
-
-    const resolved = resolveCredentialsPath(gac);
-    if (fs.existsSync(resolved)) {
-      return {
-        options: { keyFile: resolved, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
-        meta: { authMode: 'keyFile', credentialsPath: resolved },
-      };
-    }
-
-    log.error('Google credentials file not found', { path: gac, resolved });
-    throw new Error(
-      `GOOGLE_APPLICATION_CREDENTIALS is set to a path that does not exist: ${gac} (resolved: ${resolved}). ` +
-        'Use a real path to your .json key file, paste the full service account JSON (object starting with "{"), ' +
-        'or set GOOGLE_SERVICE_ACCOUNT_JSON instead.'
-    );
-  }
-
-  const defaultPath = path.resolve(BACKEND_ROOT, 'credentials.json');
-  if (!fs.existsSync(defaultPath)) {
-    log.error('Google credentials file not found', { path: defaultPath });
-    throw new Error(
-      'No Google credentials: set GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_CREDENTIALS_B64, ' +
-        'GOOGLE_APPLICATION_CREDENTIALS (path or inline JSON), or add credentials.json in the Backend folder.'
-    );
-  }
-
-  return {
-    options: { keyFile: defaultPath, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
-    meta: { authMode: 'keyFile', credentialsPath: defaultPath },
-  };
 }
 
 const { options: googleAuthOptions, meta: authMeta } = resolveGoogleAuthOptions(baseLog);
@@ -125,7 +43,6 @@ async function getSheets(log = baseLog) {
   log.debug('Google auth client obtained');
   return google.sheets({ version: 'v4', auth: client });
 }
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 // Converts a column letter to a zero-based index (A=0, B=1, G=6, etc.)
@@ -154,6 +71,8 @@ function parseSheetDate(raw) {
   return { month: date.getMonth(), year: date.getFullYear(), day: date.getDate(), date };
 }
 
+// Income columns C-E (indices 2-4)
+const EARNED_COLS = ['C', 'D', 'E'];
 // Spending columns G-N (indices 6-13)
 const SPENDING_COLS = ['G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'];
 
@@ -167,14 +86,14 @@ function emptySpendingTotals() {
 
 function breakdownFromTotals(totals) {
   return {
-    entertainment: totals.G,
-    food: totals.H,
-    gas: totals.I,
-    phone: totals.J,
-    medical: totals.K,
-    car: totals.L,
-    apartment: totals.M,
-    groceries: totals.N,
+    entertainment: roundMoney(totals.G),
+    food: roundMoney(totals.H),
+    gas: roundMoney(totals.I),
+    phone: roundMoney(totals.J),
+    medical: roundMoney(totals.K),
+    car: roundMoney(totals.L),
+    apartment: roundMoney(totals.M),
+    groceries: roundMoney(totals.N),
   };
 }
 
@@ -183,7 +102,7 @@ function getPreviousCalendarMonth(month, year) {
   return { month: month - 1, year };
 }
 
-/** Sum earned (col D) and spending (cols G–N) for one calendar month. */
+/** Sum earned (cols C–E) and spending (cols G–N) for one calendar month. */
 function aggregateMonthFromRows(rows, targetMonth, targetYear) {
   let earned = 0;
   const totals = emptySpendingTotals();
@@ -196,7 +115,9 @@ function aggregateMonthFromRows(rows, targetMonth, targetYear) {
     if (parsed.month !== targetMonth || parsed.year !== targetYear) continue;
 
     matchingRows++;
-    earned += parseFloat(row[3]) || 0;
+    for (const col of EARNED_COLS) {
+      earned += parseFloat(row[colLetterToIndex(col)]) || 0;
+    }
     for (const col of SPENDING_COLS) {
       totals[col] += parseFloat(row[colLetterToIndex(col)]) || 0;
     }
@@ -243,8 +164,9 @@ export async function getSheetRows({ log = baseLog } = {}) {
   return { rows, dateRowMap };
 }
 
-// Returns monthly totals for the current month (with previous-month rollover)
-export async function getMonthlyData({ log = baseLog } = {}) {
+// Returns monthly totals (with previous-month rollover).
+// `month` is 0-based; omit month/year to use the current calendar month.
+export async function getMonthlyData({ log = baseLog, month, year } = {}) {
   const scoped = log.child ? log.child('getMonthlyData') : log;
 
   try {
@@ -252,13 +174,15 @@ export async function getMonthlyData({ log = baseLog } = {}) {
     scoped.info('Found rows in sheet', { rowCount: rows.length });
 
     const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
+    const currentMonth = Number.isInteger(month) ? month : now.getMonth();
+    const currentYear = Number.isInteger(year) ? year : now.getFullYear();
     const prev = getPreviousCalendarMonth(currentMonth, currentYear);
+    const isCurrent = currentMonth === now.getMonth() && currentYear === now.getFullYear();
 
-    scoped.debug('Filtering rows for current month', {
+    scoped.debug('Filtering rows for month', {
       month: currentMonth + 1,
       year: currentYear,
+      isCurrent,
       rolloverFrom: { month: prev.month + 1, year: prev.year },
     });
 
@@ -268,7 +192,7 @@ export async function getMonthlyData({ log = baseLog } = {}) {
     const available = roundMoney(current.earned + rollover);
     const remaining = roundMoney(available - current.spent);
 
-    scoped.info('Aggregated current month rows', {
+    scoped.info('Aggregated month rows', {
       matchingRows: current.matchingRows,
       earned: current.earned,
       spent: current.spent,
@@ -278,9 +202,17 @@ export async function getMonthlyData({ log = baseLog } = {}) {
     });
 
     const result = {
+      year: currentYear,
+      month: currentMonth + 1,
+      isCurrent,
       earned: current.earned,
       spent: current.spent,
       rollover,
+      rolloverFrom: {
+        month: prev.month + 1,
+        year: prev.year,
+        label: MONTH_SHORT[prev.month],
+      },
       available,
       remaining,
       breakdown: breakdownFromTotals(current.totals),
@@ -300,6 +232,53 @@ export async function getMonthlyData({ log = baseLog } = {}) {
     return result;
   } catch (err) {
     scoped.error('getMonthlyData failed', { message: err.message, stack: err.stack });
+    throw err;
+  }
+}
+
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * Monthly earned/spent + category breakdown for the last `monthCount` calendar months.
+ * Leading months with no activity are trimmed so a new sheet doesn't show a year of zeros.
+ */
+export async function getTrendsData({ log = baseLog, monthCount = 12 } = {}) {
+  const scoped = log.child ? log.child('getTrendsData') : log;
+  const count = Math.min(Math.max(Number(monthCount) || 12, 1), 24);
+
+  try {
+    const { rows } = await getSheetRows({ log: scoped });
+    const now = new Date();
+    const months = [];
+
+    for (let i = count - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const month = d.getMonth();
+      const year = d.getFullYear();
+      const agg = aggregateMonthFromRows(rows, month, year);
+      months.push({
+        year,
+        month: month + 1,
+        key: `${year}-${String(month + 1).padStart(2, '0')}`,
+        label: MONTH_SHORT[month],
+        earned: agg.earned,
+        spent: agg.spent,
+        remaining: agg.remaining,
+        breakdown: breakdownFromTotals(agg.totals),
+      });
+    }
+
+    const firstActive = months.findIndex((m) => m.spent > 0 || m.earned > 0);
+    const trimmed = firstActive === -1 ? months.slice(-1) : months.slice(firstActive);
+
+    scoped.info('Returning trends', {
+      months: trimmed.length,
+      from: trimmed[0]?.key,
+      to: trimmed[trimmed.length - 1]?.key,
+    });
+    return { months: trimmed };
+  } catch (err) {
+    scoped.error('getTrendsData failed', { message: err.message, stack: err.stack });
     throw err;
   }
 }

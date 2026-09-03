@@ -32,9 +32,9 @@ export function DepletingBar({
   useEffect(() => {
     Animated.timing(anim, {
       toValue: target,
-      duration: 850,
+      duration: 1100,
       delay,
-      easing: Easing.out(Easing.cubic),
+      easing: Easing.bezier(0.16, 1, 0.3, 1),
       useNativeDriver: false,
     }).start();
   }, [anim, target, delay]);

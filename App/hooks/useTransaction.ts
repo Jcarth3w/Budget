@@ -13,6 +13,10 @@ export function useTransaction() {
     type: "success" | "error";
     message: string;
   } | null>(null);
+  const [lastAdded, setLastAdded] = useState<{
+    amount: number;
+    label: string;
+  } | null>(null);
 
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const successAnim = useRef(new Animated.Value(0)).current;
@@ -73,7 +77,9 @@ export function useTransaction() {
       if (!res.ok) throw new Error(json.error || "Something went wrong");
 
       const categoryLabel = CATEGORY_BY_COL[selectedCategory]?.label ?? selectedCategory;
-      showSuccess(`$${parseFloat(amount).toFixed(2)} added to ${categoryLabel}`);
+      const parsed = parseFloat(amount);
+      setLastAdded({ amount: parsed, label: categoryLabel });
+      showSuccess(`$${parsed.toFixed(2)} added to ${categoryLabel}`);
       notifyBudgetChanged();
       reset();
     } catch (err: any) {
@@ -91,5 +97,6 @@ export function useTransaction() {
     status,
     shakeAnim,
     submit,
+    lastAdded,
   };
 }
