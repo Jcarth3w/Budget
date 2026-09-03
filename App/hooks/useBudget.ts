@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Animated } from "react-native";
+import { Animated, Easing } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import SERVER_URL from "@/config/server";
 
@@ -25,12 +25,19 @@ export type BudgetBreakdown = {
 export type BudgetData = {
   earned: number;
   spent: number;
+  rollover: number;
+  available: number;
   remaining: number;
   breakdown: BudgetBreakdown;
   budget503020: {
     needs: number;
     wants: number;
     investments: number;
+  };
+  previousMonth?: {
+    earned: number;
+    spent: number;
+    remaining: number;
   };
 };
 
@@ -45,15 +52,19 @@ export function useBudget() {
   const slideAnim = useRef(new Animated.Value(30)).current;
 
   const animateIn = useCallback(() => {
+    fadeAnim.setValue(0);
+    slideAnim.setValue(24);
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 600,
+        duration: 700,
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.timing(slideAnim, {
         toValue: 0,
-        duration: 600,
+        duration: 700,
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
     ]).start();
@@ -72,7 +83,25 @@ export function useBudget() {
       if (!res.ok) {
         throw new Error(json.error || `Could not load budget (${res.status})`);
       }
-      setData(json);
+      const earned = Number(json.earned) || 0;
+      const spent = Number(json.spent) || 0;
+      const rollover = Number(json.rollover) || 0;
+      const available = json.available != null ? Number(json.available) : earned + rollover;
+      const remaining =
+        json.remaining != null ? Number(json.remaining) : available - spent;
+      setData({
+        ...json,
+        earned,
+        spent,
+        rollover,
+        available,
+        remaining,
+        budget503020: json.budget503020 ?? {
+          needs: available * 0.5,
+          wants: available * 0.3,
+          investments: available * 0.2,
+        },
+      });
       setError(null);
       animateIn();
     } catch (err: any) {

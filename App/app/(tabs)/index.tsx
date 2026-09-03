@@ -11,6 +11,7 @@ import {
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import { useBudget } from "@/hooks/useBudget";
+import { DepletingBar } from "@/components/DepletingBar";
 import { CATEGORY_BY_KEY } from "../../constants/categories";
 import { fmt, formatMonthYear } from "@/utils/format";
 
@@ -61,13 +62,14 @@ export default function HomeScreen() {
 
   const earned = data?.earned ?? 0;
   const spent = data?.spent ?? 0;
-  const remaining = data?.remaining ?? 0;
+  const rollover = data?.rollover ?? 0;
+  const available = data?.available ?? earned + rollover;
+  const remaining = data?.remaining ?? available - spent;
   const breakdown = data?.breakdown ?? {};
   const targets = data?.budget503020 ?? { needs: 0, wants: 0, investments: 0 };
 
   const needsSpent = NEEDS_KEYS.reduce((sum, k) => sum + ((breakdown as any)[k] ?? 0), 0);
   const wantsSpent = WANTS_KEYS.reduce((sum, k) => sum + ((breakdown as any)[k] ?? 0), 0);
-  const spentPercent = earned > 0 ? Math.min((spent / earned) * 100, 100) : 0;
 
   return (
     <ScrollView
@@ -90,9 +92,19 @@ export default function HomeScreen() {
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Earned This Month</Text>
           <Text style={styles.balanceAmount}>{fmt(earned)}</Text>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${spentPercent}%` }]} />
-          </View>
+          {rollover !== 0 && (
+            <Text
+              style={[
+                styles.rolloverLine,
+                { color: rollover >= 0 ? "#7DF9C2" : "#FF6B6B" },
+              ]}
+            >
+              {rollover >= 0 ? "+" : ""}
+              {fmt(rollover)} from last month
+            </Text>
+          )}
+          <Text style={styles.availableLine}>Available {fmt(available)}</Text>
+          <DepletingBar total={available} spent={spent} color="#7DF9C2" height={6} />
           <View style={styles.progressLabels}>
             <Text style={styles.progressText}>Spent {fmt(spent)}</Text>
             <Text style={[styles.progressText, { color: remaining >= 0 ? "#7DF9C2" : "#FF6B6B" }]}>
@@ -104,9 +116,9 @@ export default function HomeScreen() {
         {/* 50/30/20 Buckets */}
         <Text style={styles.sectionTitle}>50 / 30 / 20</Text>
         <View style={styles.bucketsRow}>
-          <BucketCard label="Needs"  target={targets.needs}       spent={needsSpent} color="#7DF9C2" />
-          <BucketCard label="Wants"  target={targets.wants}       spent={wantsSpent} color="#FFD166" />
-          <BucketCard label="Invest" target={targets.investments} spent={0}          color="#A78BFA" noSpend />
+          <BucketCard label="Needs"  target={targets.needs}       spent={needsSpent} color="#7DF9C2" delay={0} />
+          <BucketCard label="Wants"  target={targets.wants}       spent={wantsSpent} color="#FFD166" delay={120} />
+          <BucketCard label="Invest" target={targets.investments} spent={0}          color="#A78BFA" noSpend delay={240} />
         </View>
 
         {/* Category breakdown */}
@@ -138,11 +150,11 @@ type BucketCardProps = {
   spent: number;
   color: string;
   noSpend?: boolean;
+  delay?: number;
 };
 
-function BucketCard({ label, target, spent, color, noSpend }: BucketCardProps) {
+function BucketCard({ label, target, spent, color, noSpend, delay = 0 }: BucketCardProps) {
   const remaining = target - spent;
-  const percent = target > 0 ? Math.min((spent / target) * 100, 100) : 0;
 
   return (
     <View style={[styles.bucketCard, { borderTopColor: color }]}>
@@ -150,15 +162,18 @@ function BucketCard({ label, target, spent, color, noSpend }: BucketCardProps) {
       <Text style={styles.bucketTarget}>{fmt(target)}</Text>
       {!noSpend && (
         <>
-          <View style={styles.bucketTrack}>
-            <View style={[styles.bucketFill, { width: `${percent}%`, backgroundColor: color }]} />
-          </View>
+          <DepletingBar total={target} spent={spent} color={color} height={4} delay={delay} />
           <Text style={styles.bucketRemaining}>
             {remaining >= 0 ? `${fmt(remaining)} left` : `${fmt(Math.abs(remaining))} over`}
           </Text>
         </>
       )}
-      {noSpend && <Text style={styles.bucketRemaining}>Target</Text>}
+      {noSpend && (
+        <>
+          <DepletingBar total={1} spent={0} color={color} height={4} delay={delay} />
+          <Text style={styles.bucketRemaining}>Target</Text>
+        </>
+      )}
     </View>
   );
 }
@@ -199,16 +214,15 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     marginBottom: 4,
   },
-  balanceAmount: { fontFamily: "PoppinsBold", fontSize: 38, color: "#F0F0F0", marginBottom: 20 },
-  progressTrack: {
-    height: 6,
-    backgroundColor: "#222",
-    borderRadius: 3,
-    overflow: "hidden",
-    marginBottom: 10,
+  balanceAmount: { fontFamily: "PoppinsBold", fontSize: 38, color: "#F0F0F0", marginBottom: 8 },
+  rolloverLine: { fontFamily: "Poppins", fontSize: 14, marginBottom: 4 },
+  availableLine: {
+    fontFamily: "Poppins",
+    fontSize: 13,
+    color: "#888",
+    marginBottom: 12,
   },
-  progressFill: { height: "100%", backgroundColor: "#7DF9C2", borderRadius: 3 },
-  progressLabels: { flexDirection: "row", justifyContent: "space-between" },
+  progressLabels: { flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
   progressText: { fontFamily: "Poppins", fontSize: 13, color: "#666" },
   sectionTitle: {
     fontFamily: "PoppinsBold",
@@ -230,9 +244,7 @@ const styles = StyleSheet.create({
   },
   bucketLabel: { fontFamily: "PoppinsBold", fontSize: 12, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 },
   bucketTarget: { fontFamily: "PoppinsBold", fontSize: 16, color: "#F0F0F0", marginBottom: 10 },
-  bucketTrack: { height: 4, backgroundColor: "#222", borderRadius: 2, overflow: "hidden", marginBottom: 6 },
-  bucketFill: { height: "100%", borderRadius: 2 },
-  bucketRemaining: { fontFamily: "Poppins", fontSize: 11, color: "#555" },
+  bucketRemaining: { fontFamily: "Poppins", fontSize: 11, color: "#555", marginTop: 6 },
   breakdownGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 24 },
   breakdownItem: {
     width: "47%",

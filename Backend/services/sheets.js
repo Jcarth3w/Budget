@@ -1,15 +1,26 @@
 import { google } from 'googleapis';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 
+const BACKEND_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
 const SHEET_ID = process.env.SHEET_ID;
-const SHEET_NAME = process.env.SHEET_NAME;
+const SHEET_NAME = process.env.SHEET_NAME || String(new Date().getFullYear());
 
 const baseLog = createLogger('services:sheets');
 
 if (!SHEET_ID) {
   baseLog.error('Missing SHEET_ID environment variable');
   throw new Error('Missing SHEET_ID environment variable. Add SHEET_ID=your_google_sheet_id to your .env file.');
+}
+
+function resolveCredentialsPath(filePath) {
+  if (path.isAbsolute(filePath)) return filePath;
+  const fromCwd = path.resolve(process.cwd(), filePath);
+  if (fs.existsSync(fromCwd)) return fromCwd;
+  return path.resolve(BACKEND_ROOT, filePath);
 }
 
 /**
@@ -65,22 +76,23 @@ function resolveGoogleAuthOptions(log) {
       }
     }
 
-    if (fs.existsSync(gac)) {
+    const resolved = resolveCredentialsPath(gac);
+    if (fs.existsSync(resolved)) {
       return {
-        options: { keyFile: gac, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
-        meta: { authMode: 'keyFile', credentialsPath: gac },
+        options: { keyFile: resolved, scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
+        meta: { authMode: 'keyFile', credentialsPath: resolved },
       };
     }
 
-    log.error('Google credentials file not found', { path: gac });
+    log.error('Google credentials file not found', { path: gac, resolved });
     throw new Error(
-      `GOOGLE_APPLICATION_CREDENTIALS is set to a path that does not exist: ${gac}. ` +
+      `GOOGLE_APPLICATION_CREDENTIALS is set to a path that does not exist: ${gac} (resolved: ${resolved}). ` +
         'Use a real path to your .json key file, paste the full service account JSON (object starting with "{"), ' +
         'or set GOOGLE_SERVICE_ACCOUNT_JSON instead.'
     );
   }
 
-  const defaultPath = 'credentials.json';
+  const defaultPath = path.resolve(BACKEND_ROOT, 'credentials.json');
   if (!fs.existsSync(defaultPath)) {
     log.error('Google credentials file not found', { path: defaultPath });
     throw new Error(
@@ -126,6 +138,81 @@ function formatDateKey(date) {
   return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
 }
 
+/** Parse sheet dates as calendar M/D/YYYY (avoids UTC timezone shifting months). */
+function parseSheetDate(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    const month = parseInt(mdy[1], 10) - 1;
+    const day = parseInt(mdy[2], 10);
+    const year = parseInt(mdy[3], 10);
+    return { month, year, day, date: new Date(year, month, day) };
+  }
+  const date = new Date(raw);
+  if (isNaN(date.getTime())) return null;
+  return { month: date.getMonth(), year: date.getFullYear(), day: date.getDate(), date };
+}
+
+// Spending columns G-N (indices 6-13)
+const SPENDING_COLS = ['G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'];
+
+function roundMoney(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function emptySpendingTotals() {
+  return Object.fromEntries(SPENDING_COLS.map((col) => [col, 0]));
+}
+
+function breakdownFromTotals(totals) {
+  return {
+    entertainment: totals.G,
+    food: totals.H,
+    gas: totals.I,
+    phone: totals.J,
+    medical: totals.K,
+    car: totals.L,
+    apartment: totals.M,
+    groceries: totals.N,
+  };
+}
+
+function getPreviousCalendarMonth(month, year) {
+  if (month === 0) return { month: 11, year: year - 1 };
+  return { month: month - 1, year };
+}
+
+/** Sum earned (col D) and spending (cols G–N) for one calendar month. */
+function aggregateMonthFromRows(rows, targetMonth, targetYear) {
+  let earned = 0;
+  const totals = emptySpendingTotals();
+  let matchingRows = 0;
+
+  for (const row of rows) {
+    if (!row[0]) continue;
+    const parsed = parseSheetDate(row[0]);
+    if (!parsed) continue;
+    if (parsed.month !== targetMonth || parsed.year !== targetYear) continue;
+
+    matchingRows++;
+    earned += parseFloat(row[3]) || 0;
+    for (const col of SPENDING_COLS) {
+      totals[col] += parseFloat(row[colLetterToIndex(col)]) || 0;
+    }
+  }
+
+  const spent = Object.values(totals).reduce((a, b) => a + b, 0);
+  return {
+    matchingRows,
+    earned: roundMoney(earned),
+    spent: roundMoney(spent),
+    remaining: roundMoney(earned - spent),
+    totals,
+  };
+}
+
+
 // ─── Reads ────────────────────────────────────────────────────────────────────
 
 // Reads all rows from the sheet and returns:
@@ -146,9 +233,9 @@ export async function getSheetRows({ log = baseLog } = {}) {
   const dateRowMap = {};
   rows.forEach((row, i) => {
     if (!row[0]) return;
-    const d = new Date(row[0]);
-    if (isNaN(d)) return;
-    const key = formatDateKey(d);
+    const parsed = parseSheetDate(row[0]);
+    if (!parsed) return;
+    const key = `${parsed.month + 1}/${parsed.day}/${parsed.year}`;
     dateRowMap[key] = i + 1; // Sheets API is 1-based
   });
 
@@ -156,11 +243,10 @@ export async function getSheetRows({ log = baseLog } = {}) {
   return { rows, dateRowMap };
 }
 
-// Returns monthly totals for the current month
+// Returns monthly totals for the current month (with previous-month rollover)
 export async function getMonthlyData({ log = baseLog } = {}) {
   const scoped = log.child ? log.child('getMonthlyData') : log;
 
-  //break this block into smaller functions?
   try {
     const { rows } = await getSheetRows({ log: scoped });
     scoped.info('Found rows in sheet', { rowCount: rows.length });
@@ -168,63 +254,45 @@ export async function getMonthlyData({ log = baseLog } = {}) {
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
+    const prev = getPreviousCalendarMonth(currentMonth, currentYear);
+
     scoped.debug('Filtering rows for current month', {
       month: currentMonth + 1,
       year: currentYear,
+      rolloverFrom: { month: prev.month + 1, year: prev.year },
     });
 
-
-    let totalEarned = 0;
-    const totals = { G: 0, H: 0, I: 0, J: 0, K: 0, L: 0, M: 0, N: 0 };
-
-    
-    //make it's own function?
-    let matchingRows = 0;
-    for (const row of rows) {
-      if (!row[0]) continue;
-      const date = new Date(row[0]);
-      if (isNaN(date)) continue;
-      if (date.getMonth() !== currentMonth || date.getFullYear() !== currentYear) continue;
-
-      matchingRows++;
-      // Column D (index 3) = paychecks
-      totalEarned += parseFloat(row[3]) || 0;
-
-      // Spending columns G-N (indices 6-13)
-      for (const col of Object.keys(totals)) {
-        totals[col] += parseFloat(row[colLetterToIndex(col)]) || 0;
-      }
-    }
-
-
+    const current = aggregateMonthFromRows(rows, currentMonth, currentYear);
+    const previous = aggregateMonthFromRows(rows, prev.month, prev.year);
+    const rollover = previous.remaining;
+    const available = roundMoney(current.earned + rollover);
+    const remaining = roundMoney(available - current.spent);
 
     scoped.info('Aggregated current month rows', {
-      matchingRows,
-      totalEarned,
+      matchingRows: current.matchingRows,
+      earned: current.earned,
+      spent: current.spent,
+      rollover,
+      available,
+      remaining,
     });
 
-
-
-    const totalSpent = Object.values(totals).reduce((a, b) => a + b, 0);
-
     const result = {
-      earned: totalEarned,
-      spent: totalSpent,
-      remaining: totalEarned - totalSpent,
-      breakdown: {
-        entertainment: totals['G'],
-        food: totals['H'],
-        gas: totals['I'],
-        phone: totals['J'],
-        medical: totals['K'],
-        car: totals['L'],
-        apartment: totals['M'],
-        groceries: totals['N'],
-      },
+      earned: current.earned,
+      spent: current.spent,
+      rollover,
+      available,
+      remaining,
+      breakdown: breakdownFromTotals(current.totals),
       budget503020: {
-        needs: totalEarned * 0.5,
-        wants: totalEarned * 0.3,
-        investments: totalEarned * 0.2,
+        needs: roundMoney(available * 0.5),
+        wants: roundMoney(available * 0.3),
+        investments: roundMoney(available * 0.2),
+      },
+      previousMonth: {
+        earned: previous.earned,
+        spent: previous.spent,
+        remaining: previous.remaining,
       },
     };
 
@@ -338,4 +406,13 @@ export async function writeCategoryTotals({ grouped, rows, dateRowMap, log = bas
   }
 
   return updateData.length;
+}
+
+/** Call on startup to surface bad/revoked keys immediately instead of on first /budget. */
+export async function verifyGoogleCredentials({ log = baseLog } = {}) {
+  const scoped = log.child ? log.child('verify') : log;
+  scoped.debug('Verifying Google service account');
+  const client = await auth.getClient();
+  await client.getAccessToken();
+  scoped.info('Google service account credentials are valid');
 }

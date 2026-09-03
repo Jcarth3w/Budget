@@ -15,6 +15,8 @@ router.get('/', async (req, res) => {
     log.info('Returning monthly budget data', {
       earned: data.earned,
       spent: data.spent,
+      rollover: data.rollover,
+      available: data.available,
       remaining: data.remaining,
     });
     res.json(data);

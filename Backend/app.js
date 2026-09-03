@@ -67,6 +67,10 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/health', (req, res) => {
+  res.json({ ok: true });
+});
+
 app.use('/budget', budgetRouter);
 app.use('/transaction', transactionRouter);
 

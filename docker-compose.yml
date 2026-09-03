@@ -1,0 +1,50 @@
+# Self-hosted Budget (Google Sheets edition)
+#
+# Prerequisites:
+#   1. Backend/.env          — copy from Backend/.env.example (SHEET_ID, SHEET_NAME)
+#   2. Backend/credentials.json — Google service account key (not in git)
+#
+# Start everything (rebuild after code changes):  docker compose up -d --build
+# Backend only:     docker compose up -d --build backend
+# Local (no Docker): cd Backend && npm start
+#
+# Web UI:  http://<your-server-ip>:8080
+# API:     http://<your-server-ip>:3001/budget
+
+services:
+  backend:
+    build: ./Backend
+    restart: unless-stopped
+    env_file: ./Backend/.env
+    environment:
+      PORT: "3001"
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/credentials.json
+      SHEET_NAME: ${SHEET_NAME:-2026}
+    volumes:
+      - ./Backend/credentials.json:/run/secrets/credentials.json:ro
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    build:
+      context: ./App
+      args:
+        EXPO_PUBLIC_BUDGET_API_URL: ""
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
