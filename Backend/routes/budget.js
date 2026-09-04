@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getMonthlyData, getTrendsData } from '../services/sheets.js';
+import { getMonthlyData, getTrendsData } from '../services/reads.js';
 import { createLogger } from '../utils/logger.js';
 
 const router = Router();

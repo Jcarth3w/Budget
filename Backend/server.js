@@ -1,10 +1,10 @@
 import './config.js';
 import app from './app.js';
 import { createLogger } from './utils/logger.js';
-import { verifyGoogleCredentials } from './services/sheets.js';
+import { verifyGoogleCredentials } from './services/Auth/sheetsConnection.js';
 
 const log = createLogger('server');
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT;
 
 app.listen(PORT, '0.0.0.0', () => {
   log.info(`Server running on http://0.0.0.0:${PORT}`);

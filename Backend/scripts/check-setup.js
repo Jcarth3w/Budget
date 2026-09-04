@@ -2,7 +2,7 @@ import '../config.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { verifyGoogleCredentials } from '../services/sheets.js';
+import { verifyGoogleCredentials } from '../services/Auth/sheetsConnection.js';
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
