@@ -1,7 +1,7 @@
 # Self-hosted Budget (Google Sheets edition)
 #
 # Prerequisites:
-#   1. Backend/.env          — copy from Backend/.env.example (SHEET_ID, SHEET_NAME)
+#   1. Backend/.env          — copy from Backend/.env.example (SHEET_ID, SHEET_NAME, JWT_SECRET)
 #   2. Backend/credentials.json — Google service account key (not in git)
 #
 # Start everything (rebuild after code changes):  docker compose up -d --build
@@ -22,6 +22,7 @@ services:
       SHEET_NAME: ${SHEET_NAME:-2026}
     volumes:
       - ./Backend/credentials.json:/run/secrets/credentials.json:ro
+      - ./Backend/data:/app/data
     ports:
       - "3001:3001"
     healthcheck:

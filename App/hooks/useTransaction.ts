@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { Animated } from "react-native";
-import SERVER_URL from "@/config/server";
+import { apiFetch } from "@/utils/api";
 import { CATEGORY_BY_COL } from "../constants/categories";
 import { notifyBudgetChanged } from "./useBudget";
 
@@ -62,19 +62,14 @@ export function useTransaction() {
     setStatus(null);
 
     try {
-      const res = await fetch(`${SERVER_URL}/transaction`, {
+      await apiFetch("/transaction", {
         method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           amount: parseFloat(amount),
           category: selectedCategory,
           date: date.toISOString(),
         }),
       });
-
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Something went wrong");
 
       const categoryLabel = CATEGORY_BY_COL[selectedCategory]?.label ?? selectedCategory;
       const parsed = parseFloat(amount);

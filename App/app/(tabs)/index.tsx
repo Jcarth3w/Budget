@@ -16,6 +16,7 @@ import { CATEGORY_BY_KEY, NEEDS_KEYS, WANTS_KEYS } from "@/constants/categories"
 import { fmt, isCurrentMonth, monthTitle, shiftMonth } from "@/utils/format";
 import { AmbientGlow, FadeSlideIn, PressScale } from "@/components/motion";
 import { AnimatedNumber } from "@/components/AnimatedNumber";
+import { useAuth } from "@/context/AuthContext";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -26,6 +27,7 @@ function nowView() {
 
 export default function HomeScreen() {
   const [view, setView] = useState(nowView);
+  const { user, logout } = useAuth();
   const { data, loading, refreshing, error, refresh } = useBudget(view);
 
   const [fontsLoaded] = useFonts({
@@ -122,6 +124,12 @@ export default function HomeScreen() {
           </PressScale>
         </View>
         <Text style={styles.title}>Budget</Text>
+        <View style={styles.accountRow}>
+          <Text style={styles.accountEmail} numberOfLines={1}>{user?.email}</Text>
+          <PressScale onPress={() => logout().catch(() => {})}>
+            <Text style={styles.logout}>Log out</Text>
+          </PressScale>
+        </View>
       </FadeSlideIn>
 
       <FadeSlideIn delay={90}>
@@ -278,7 +286,16 @@ const styles = StyleSheet.create({
     color: "#7DF9C2",
     marginTop: 2,
   },
-  title: { fontFamily: "PoppinsBold", fontSize: 40, color: "#F0F0F0", lineHeight: 46, marginBottom: 22 },
+  title: { fontFamily: "PoppinsBold", fontSize: 40, color: "#F0F0F0", lineHeight: 46, marginBottom: 8 },
+  accountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 22,
+    gap: 12,
+  },
+  accountEmail: { flex: 1, fontFamily: "Poppins", fontSize: 13, color: "#666" },
+  logout: { fontFamily: "PoppinsBold", fontSize: 13, color: "#7DF9C2" },
   balanceCard: {
     backgroundColor: "#16161A",
     borderRadius: 20,

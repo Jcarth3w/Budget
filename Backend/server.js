@@ -8,7 +8,7 @@ const PORT = process.env.PORT;
 
 app.listen(PORT, '0.0.0.0', () => {
   log.info(`Server running on http://0.0.0.0:${PORT}`);
-  log.info('Try: GET /health  and  GET /budget');
+  log.info('Try: GET /health  and  POST /auth/register');
 
   verifyGoogleCredentials({ log }).catch((err) => {
     const authFailed = /invalid_grant|invalid jwt|unauthorized/i.test(err.message || '');

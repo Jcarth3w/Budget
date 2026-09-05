@@ -12,7 +12,7 @@ router.post('/', async (req, res) => {
   const log = req.log ? req.log.child('transaction') : baseLog;
   const { amount, category, date } = req.body;
 
-  log.info('Handling POST /transaction', { amount, category, date });
+  log.info('Handling POST /transaction', { amount, category, date, user: req.user?.email });
 
   if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
     log.warn('Rejected: invalid amount', { amount });

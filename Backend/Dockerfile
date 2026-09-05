@@ -6,6 +6,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY app.js config.js server.js ./
+COPY middleware ./middleware
 COPY routes ./routes
 COPY services ./services
 COPY utils ./utils

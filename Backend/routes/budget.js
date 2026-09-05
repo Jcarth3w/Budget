@@ -26,7 +26,7 @@ router.get('/trends', async (req, res) => {
 
 router.get('/', async (req, res) => {
   const log = req.log ? req.log.child('budget') : baseLog;
-  log.info('Handling GET /budget', { month: req.query.month, year: req.query.year });
+  log.info('Handling GET /budget', { month: req.query.month, year: req.query.year, user: req.user?.email });
 
   let monthIndex;
   let year;

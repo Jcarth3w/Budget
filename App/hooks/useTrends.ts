@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import SERVER_URL from "@/config/server";
+import { apiFetch } from "@/utils/api";
 import { subscribeBudgetChanged, type BudgetBreakdown } from "@/hooks/useBudget";
 
 export type MonthTrend = {
@@ -26,11 +26,7 @@ export function useTrends() {
 
   const fetchTrends = useCallback(async () => {
     try {
-      const res = await fetch(`${SERVER_URL}/budget/trends?months=12`, { cache: "no-store" });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(json.error || `Could not load trends (${res.status})`);
-      }
+      const json = await apiFetch<TrendsData>("/budget/trends?months=12");
       const months = Array.isArray(json.months) ? json.months : [];
       setData({
         months: months.map((m: MonthTrend) => ({

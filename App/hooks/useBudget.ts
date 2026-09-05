@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import SERVER_URL from "@/config/server";
+import { apiFetch } from "@/utils/api";
 
 type RefreshListener = () => void;
 const refreshListeners = new Set<RefreshListener>();
@@ -64,15 +64,7 @@ export function useBudget(view?: { month: number; year: number }) {
     try {
       const qs =
         month != null && year != null ? `?month=${month}&year=${year}` : "";
-      const res = await fetch(`${SERVER_URL}/budget${qs}`, { cache: "no-store" });
-      if (res.status === 304) {
-        setError(null);
-        return;
-      }
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(json.error || `Could not load budget (${res.status})`);
-      }
+      const json = await apiFetch<BudgetData>(`/budget${qs}`);
       const earned = Number(json.earned) || 0;
       const spent = Number(json.spent) || 0;
       const rollover = Number(json.rollover) || 0;
