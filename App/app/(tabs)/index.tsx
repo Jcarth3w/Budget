@@ -1,61 +1,61 @@
-import React, { useCallback, useState } from "react";
+import React, { useState } from "react";
 import {
-  View,
-  Text,
+  ActivityIndicator,
+  Linking,
+  RefreshControl,
   ScrollView,
   StyleSheet,
-  ActivityIndicator,
-  RefreshControl,
+  Text,
+  View,
 } from "react-native";
-import { useFonts } from "expo-font";
-import * as SplashScreen from "expo-splash-screen";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Haptics from "expo-haptics";
-import { useBudget } from "@/hooks/useBudget";
-import { DepletingBar } from "@/components/DepletingBar";
-import { CATEGORY_BY_KEY, NEEDS_KEYS, WANTS_KEYS } from "@/constants/categories";
+import { router } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "@/context/AuthContext";
+import { useBudget, type BucketProgress } from "@/hooks/useBudget";
+import { useTrends } from "@/hooks/useTrends";
+import { NEEDS_KEYS, WANTS_KEYS } from "@/constants/categories";
+import { BudgetTheme as theme } from "@/constants/Colors";
 import { fmt, isCurrentMonth, monthTitle, shiftMonth } from "@/utils/format";
+import { categoryRows, displayNameFromEmail, greetingForDate } from "@/utils/budgetHelpers";
+import { buildBudgetInsights } from "@/utils/suggestions";
 import { AmbientGlow, FadeSlideIn, PressScale } from "@/components/motion";
 import { AnimatedNumber } from "@/components/AnimatedNumber";
-import { useAuth } from "@/context/AuthContext";
-
-SplashScreen.preventAutoHideAsync();
+import { CategoryCard } from "@/components/CategoryCard";
+import { DepletingBar } from "@/components/DepletingBar";
+import { InsightCard } from "@/components/InsightCard";
 
 function nowView() {
-  const n = new Date();
-  return { month: n.getMonth() + 1, year: n.getFullYear() };
+  const now = new Date();
+  return { month: now.getMonth() + 1, year: now.getFullYear() };
 }
 
 export default function HomeScreen() {
   const [view, setView] = useState(nowView);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [dismissedInsights, setDismissedInsights] = useState<string[]>([]);
+  const [insightIndex, setInsightIndex] = useState(0);
+  const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
   const { data, loading, refreshing, error, refresh } = useBudget(view);
-
-  const [fontsLoaded] = useFonts({
-    Poppins: require("../../assets/fonts/Poppins-Regular.ttf"),
-    PoppinsBold: require("../../assets/fonts/Poppins-Bold.ttf"),
-  });
-
-  const onLayoutRootView = useCallback(async () => {
-    if (fontsLoaded) await SplashScreen.hideAsync();
-  }, [fontsLoaded]);
+  const { data: trends } = useTrends();
 
   const viewingNow = isCurrentMonth(view.year, view.month);
   const go = (delta: number) => {
     const next = shiftMonth(view.year, view.month, delta);
-    if (delta > 0 && !isCurrentMonth(next.year, next.month) && next.year * 12 + next.month > nowView().year * 12 + nowView().month) {
-      return;
-    }
+    const now = nowView();
+    if (next.year * 12 + next.month > now.year * 12 + now.month) return;
     Haptics.selectionAsync().catch(() => {});
+    setExpandedCategory(null);
     setView(next);
   };
 
-  if (!fontsLoaded) return null;
-
   if (loading && !data) {
     return (
-      <View style={styles.loadingContainer} onLayout={onLayoutRootView}>
-        <ActivityIndicator size="large" color="#7DF9C2" />
-        <Text style={styles.loadingText}>Loading budget...</Text>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={theme.color.accent} />
+        <Text style={styles.loadingText}>Loading your budget…</Text>
       </View>
     );
   }
@@ -65,358 +65,317 @@ export default function HomeScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.loadingContainer}
-        onLayout={onLayoutRootView}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#7DF9C2" />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.color.accent} />}
       >
-        <Text style={styles.errorTitle}>Couldn’t load budget</Text>
+        <Text style={styles.errorTitle}>Couldn’t load your budget</Text>
         <Text style={styles.error}>{error}</Text>
         <Text style={styles.retryHint}>Pull down to retry</Text>
       </ScrollView>
     );
   }
 
-  const earned = data?.earned ?? 0;
   const spent = data?.spent ?? 0;
   const rollover = data?.rollover ?? 0;
-  const available = data?.available ?? earned + rollover;
+  const available = data?.available ?? 0;
   const remaining = data?.remaining ?? available - spent;
   const breakdown = data?.breakdown ?? {};
-  const targets = data?.budget503020 ?? { needs: 0, wants: 0, investments: 0 };
-  const fromLabel = data?.rolloverFrom?.label ?? "last month";
+  const needsSpent = data?.buckets?.needs.spent
+    ?? NEEDS_KEYS.reduce((sum, key) => sum + (Number(breakdown[key as keyof typeof breakdown]) || 0), 0);
+  const wantsSpent = data?.buckets?.wants.spent
+    ?? WANTS_KEYS.reduce((sum, key) => sum + (Number(breakdown[key as keyof typeof breakdown]) || 0), 0);
+  const fallbackBucket = (availableAmount: number, bucketSpent: number): BucketProgress => ({
+    allocated: availableAmount,
+    rollover: 0,
+    available: availableAmount,
+    spent: bucketSpent,
+    remaining: availableAmount - bucketSpent,
+  });
+  const needs = data?.buckets?.needs ?? fallbackBucket(data?.budget503020.needs ?? 0, needsSpent);
+  const wants = data?.buckets?.wants ?? fallbackBucket(data?.budget503020.wants ?? 0, wantsSpent);
+  const investments = data?.buckets?.investments
+    ?? fallbackBucket(data?.budget503020.investments ?? 0, 0);
 
-  const needsSpent = NEEDS_KEYS.reduce((sum, k) => sum + ((breakdown as Record<string, number>)[k] ?? 0), 0);
-  const wantsSpent = WANTS_KEYS.reduce((sum, k) => sum + ((breakdown as Record<string, number>)[k] ?? 0), 0);
-
-  const breakdownEntries = Object.entries(breakdown).filter(([key]) => CATEGORY_BY_KEY[key]);
+  const trendIndex = trends?.months.findIndex((month) => month.year === view.year && month.month === view.month) ?? -1;
+  const previousBreakdown = trendIndex > 0 ? trends?.months[trendIndex - 1].breakdown : undefined;
+  const rows = categoryRows(breakdown, previousBreakdown, spent);
+  const percentUsed = available > 0 ? Math.round((spent / available) * 100) : 0;
+  const insights = data
+    ? buildBudgetInsights(data, trends?.months ?? []).filter((insight) => !dismissedInsights.includes(insight.id))
+    : [];
+  const activeInsightIndex = insights.length > 0 ? insightIndex % insights.length : 0;
+  const activeInsight = insights[activeInsightIndex];
 
   return (
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={styles.container}
-      onLayout={onLayoutRootView}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#7DF9C2" />
-      }
+      contentContainerStyle={[styles.container, { paddingTop: Math.max(insets.top + 10, 24) }]}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.color.accent} />}
     >
       <AmbientGlow intensity="strong" />
 
-      <FadeSlideIn delay={0}>
+      <FadeSlideIn>
+        <View style={styles.heroTop}>
+          <View style={styles.greetingWrap}>
+            <Text style={styles.eyebrow}>{greetingForDate()}</Text>
+            <Text style={styles.greeting} numberOfLines={1}>{displayNameFromEmail(user?.email)}</Text>
+          </View>
+          <View style={styles.actions}>
+            {data?.spreadsheetUrl ? (
+              <IconAction
+                icon="description"
+                label="Open spreadsheet"
+                onPress={() => Linking.openURL(data.spreadsheetUrl as string).catch(() => {})}
+              />
+            ) : null}
+            <IconAction icon="logout" label="Log out" onPress={() => logout().catch(() => {})} />
+          </View>
+        </View>
+
         <View style={styles.monthNav}>
-          <PressScale onPress={() => go(-1)} style={styles.navBtn}>
-            <Text style={styles.navChevron}>‹</Text>
+          <PressScale
+            onPress={() => go(-1)}
+            accessibilityRole="button"
+            accessibilityLabel="Previous month"
+            style={styles.navButton}
+          >
+            <MaterialIcons name="chevron-left" size={24} color={theme.color.text} />
           </PressScale>
-          <View style={styles.monthNavCenter}>
+          <View style={styles.monthCenter}>
             <Text style={styles.monthLabel}>{monthTitle(view.year, view.month)}</Text>
-            {!viewingNow && (
-              <PressScale onPress={() => { Haptics.selectionAsync().catch(() => {}); setView(nowView()); }}>
-                <Text style={styles.nowLink}>This month</Text>
+            {!viewingNow ? (
+              <PressScale
+                accessibilityRole="button"
+                accessibilityLabel="Return to this month"
+                onPress={() => setView(nowView())}
+              >
+                <Text style={styles.nowLink}>Return to this month</Text>
               </PressScale>
+            ) : (
+              <Text style={styles.currentLabel}>Current cycle</Text>
             )}
           </View>
           <PressScale
             onPress={() => go(1)}
             disabled={viewingNow}
-            style={[styles.navBtn, viewingNow && styles.navBtnOff]}
+            accessibilityRole="button"
+            accessibilityLabel="Next month"
+            accessibilityState={{ disabled: viewingNow }}
+            style={[styles.navButton, viewingNow && styles.navButtonDisabled]}
           >
-            <Text style={[styles.navChevron, viewingNow && styles.navChevronOff]}>›</Text>
-          </PressScale>
-        </View>
-        <Text style={styles.title}>Budget</Text>
-        <View style={styles.accountRow}>
-          <Text style={styles.accountEmail} numberOfLines={1}>{user?.email}</Text>
-          <PressScale onPress={() => logout().catch(() => {})}>
-            <Text style={styles.logout}>Log out</Text>
+            <MaterialIcons name="chevron-right" size={24} color={theme.color.text} />
           </PressScale>
         </View>
       </FadeSlideIn>
 
-      <FadeSlideIn delay={90}>
-        <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>Earned</Text>
-          <AnimatedNumber value={earned} formatter={fmt} style={styles.balanceAmount} />
-
-          <DepletingBar total={available} spent={spent} color="#7DF9C2" height={6} />
-          <View style={styles.progressLabels}>
-            <Text style={styles.progressText}>Spent {fmt(spent)}</Text>
-            <AnimatedNumber
-              value={Math.abs(remaining)}
-              formatter={(n) => `${remaining >= 0 ? "Left" : "Over"} ${fmt(n)}`}
-              style={[styles.progressText, { color: remaining >= 0 ? "#7DF9C2" : "#FF6B6B" }]}
-            />
-          </View>
-        </View>
-      </FadeSlideIn>
-
-      {rollover !== 0 && (
-        <FadeSlideIn delay={140}>
-          <View style={[styles.rolloverCard, rollover < 0 && styles.rolloverCardNeg]}>
-            <View style={styles.rolloverCopy}>
-              <Text style={styles.rolloverKicker}>
-                {rollover >= 0 ? "Rolled over" : "Carried over"} from {fromLabel}
-              </Text>
-              <Text style={styles.rolloverHint}>
-                {rollover >= 0
-                  ? "Added to what you can spend"
-                  : "Taken from this month’s available"}
+      <FadeSlideIn delay={70}>
+        <View style={styles.allowanceCard}>
+          <View style={styles.allowanceHeader}>
+            <View>
+              <Text style={styles.allowanceLabel}>Monthly allowance</Text>
+              <AnimatedNumber value={available} formatter={fmt} style={styles.allowanceAmount} duration={650} />
+            </View>
+            <View style={[styles.statusPill, remaining < 0 && styles.statusPillOver]}>
+              <Text style={[styles.statusText, remaining < 0 && styles.statusTextOver]}>
+                {remaining >= 0 ? `${fmt(remaining)} left` : `${fmt(Math.abs(remaining))} over`}
               </Text>
             </View>
-            <Text style={[styles.rolloverAmt, { color: rollover >= 0 ? "#7DF9C2" : "#FF6B6B" }]}>
-              {rollover >= 0 ? "+" : "−"}
-              {fmt(rollover)}
-            </Text>
           </View>
-          <Text style={styles.availableLine}>Available {fmt(available)}</Text>
-        </FadeSlideIn>
-      )}
-
-      {rollover === 0 && (
-        <Text style={styles.availableLineSolo}>Available {fmt(available)}</Text>
-      )}
-
-      <FadeSlideIn delay={180}>
-        <Text style={styles.sectionTitle}>50 / 30 / 20</Text>
-        <View style={styles.bucketsRow}>
-          <BucketCard label="Needs"  target={targets.needs}       spent={needsSpent} color="#7DF9C2" delay={0} />
-          <BucketCard label="Wants"  target={targets.wants}       spent={wantsSpent} color="#FFD166" delay={120} />
-          <BucketCard label="Invest" target={targets.investments} spent={0}          color="#A78BFA" noSpend delay={240} />
+          <DepletingBar
+            total={Math.max(available, 1)}
+            spent={spent}
+            color={remaining >= 0 ? theme.color.accent : theme.color.negative}
+            height={7}
+          />
+          <View style={styles.allowanceFooter}>
+            <Text style={styles.allowanceMeta}>{fmt(spent)} spent</Text>
+            <Text style={styles.allowanceMeta}>{percentUsed}% used</Text>
+          </View>
+          {rollover !== 0 ? (
+            <Text style={styles.rolloverText}>
+              Includes {fmt(rollover)} carried from {data?.rolloverFrom?.label ?? "earlier months"}
+            </Text>
+          ) : null}
         </View>
       </FadeSlideIn>
 
-      <Text style={styles.sectionTitle}>Breakdown</Text>
-      <View style={styles.breakdownGrid}>
-        {breakdownEntries.map(([key, amount], i) => {
-          const cat = CATEGORY_BY_KEY[key];
-          if (!cat) return null;
-          return (
-            <FadeSlideIn key={key} delay={260 + i * 70} style={styles.breakdownItem}>
-              <View style={[styles.breakdownAccent, { backgroundColor: cat.color }]} />
-              <Text style={styles.breakdownEmoji}>{cat.emoji}</Text>
-              <Text style={styles.breakdownLabel}>{cat.label}</Text>
-              <AnimatedNumber
-                value={amount as number}
-                formatter={fmt}
-                style={styles.breakdownAmount}
-                duration={800}
-              />
-            </FadeSlideIn>
-          );
-        })}
+      {activeInsight ? (
+        <FadeSlideIn delay={110}>
+          <InsightCard
+            insight={activeInsight}
+            position={activeInsightIndex}
+            total={insights.length}
+            onNext={() => setInsightIndex((current) => (current + 1) % insights.length)}
+            onDismiss={() => {
+              setDismissedInsights((current) => [...current, activeInsight.id]);
+              setInsightIndex(0);
+            }}
+          />
+        </FadeSlideIn>
+      ) : null}
+
+      <SectionHeader title="Your plan" subtitle="50 / 30 / 20 allocation" />
+      <View style={styles.bucketStack}>
+        <BucketCard label="Needs" progress={needs} color={theme.color.accent} />
+        <BucketCard label="Wants" progress={wants} color={theme.color.warning} />
+        <BucketCard label="Invest" progress={investments} color="#A78BFA" />
       </View>
 
-      {error && <Text style={styles.error}>{error}</Text>}
+      <SectionHeader title="Spending" subtitle="Tap a category for details" />
+      <View style={styles.categoryStack}>
+        {rows.map(({ category, amount, previous, share }, index) => (
+          <FadeSlideIn key={category.key} delay={Math.min(index * 35, 180)}>
+            <CategoryCard
+              category={category}
+              amount={amount}
+              previous={previous}
+              share={share}
+              bucketSpent={category.bucket === "needs" ? needsSpent : wantsSpent}
+              expanded={expandedCategory === category.key}
+              onToggle={() => setExpandedCategory((current) => current === category.key ? null : category.key)}
+              onViewTrend={() => router.push({ pathname: "/(tabs)/analytics", params: { category: category.key } })}
+            />
+          </FadeSlideIn>
+        ))}
+      </View>
+
+      {error ? <Text style={styles.error}>{error}</Text> : null}
     </ScrollView>
   );
 }
 
-type BucketCardProps = {
-  label: string;
-  target: number;
-  spent: number;
-  color: string;
-  noSpend?: boolean;
-  delay?: number;
-};
-
-function BucketCard({ label, target, spent, color, noSpend, delay = 0 }: BucketCardProps) {
-  const remaining = target - spent;
-
+function IconAction({ icon, label, onPress }: { icon: "description" | "logout"; label: string; onPress: () => void }) {
   return (
-    <View style={[styles.bucketCard, { borderTopColor: color }]}>
-      <Text style={[styles.bucketLabel, { color }]}>{label}</Text>
-      <AnimatedNumber value={target} formatter={fmt} style={styles.bucketTarget} duration={700} />
-      {!noSpend && (
-        <>
-          <DepletingBar total={target} spent={spent} color={color} height={4} delay={delay} />
-          <Text style={styles.bucketRemaining}>
-            {remaining >= 0 ? `${fmt(remaining)} left` : `${fmt(Math.abs(remaining))} over`}
+    <PressScale
+      onPress={() => {
+        Haptics.selectionAsync().catch(() => {});
+        onPress();
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={styles.iconAction}
+    >
+      <MaterialIcons name={icon} size={20} color={theme.color.textMuted} />
+    </PressScale>
+  );
+}
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+    </View>
+  );
+}
+
+function BucketCard({ label, progress, color }: { label: string; progress: BucketProgress; color: string }) {
+  const over = progress.remaining < 0;
+  return (
+    <View style={styles.bucketCard}>
+      <View style={[styles.bucketAccent, { backgroundColor: color }]} />
+      <View style={styles.bucketHeader}>
+        <View>
+          <Text style={[styles.bucketLabel, { color }]}>{label}</Text>
+          <Text style={styles.bucketAllocation}>{fmt(progress.available)} available</Text>
+        </View>
+        <View style={styles.bucketRight}>
+          <Text style={[styles.bucketRemaining, over && styles.negative]}>
+            {over ? `${fmt(Math.abs(progress.remaining))} over` : `${fmt(progress.remaining)} left`}
           </Text>
-        </>
-      )}
-      {noSpend && (
-        <>
-          <DepletingBar total={1} spent={0} color={color} height={4} delay={delay} />
-          <Text style={styles.bucketRemaining}>Target</Text>
-        </>
-      )}
+          <Text style={styles.bucketSpent}>{fmt(progress.spent)} spent</Text>
+        </View>
+      </View>
+      <DepletingBar
+        total={Math.max(progress.available, 1)}
+        spent={progress.spent}
+        color={over ? theme.color.negative : color}
+        height={5}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: "#0D0D0F" },
-  container: { padding: 24, paddingTop: 56, paddingBottom: 120 },
+  scroll: { flex: 1, backgroundColor: theme.color.background },
+  container: { paddingHorizontal: 20, paddingBottom: 120 },
   loadingContainer: {
-    flex: 1,
-    backgroundColor: "#0D0D0F",
+    flexGrow: 1,
+    backgroundColor: theme.color.background,
     justifyContent: "center",
     alignItems: "center",
     gap: 12,
+    padding: 24,
   },
-  loadingText: { color: "#7DF9C2", fontFamily: "Poppins", fontSize: 16 },
-  monthNav: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  monthNavCenter: { flex: 1, alignItems: "center" },
-  navBtn: {
+  loadingText: { color: theme.color.accent, fontFamily: "Poppins", fontSize: 15 },
+  heroTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 16 },
+  greetingWrap: { flex: 1 },
+  eyebrow: { color: theme.color.textMuted, fontFamily: "Poppins", fontSize: 13 },
+  greeting: { color: theme.color.text, fontFamily: "PoppinsBold", fontSize: 34, lineHeight: 40 },
+  actions: { flexDirection: "row", gap: 8 },
+  iconAction: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#16161A",
+    backgroundColor: theme.color.surface,
     borderWidth: 1,
-    borderColor: "#222",
+    borderColor: theme.color.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  navBtnOff: { opacity: 0.35 },
-  navChevron: { fontFamily: "PoppinsBold", fontSize: 28, color: "#F0F0F0", marginTop: -4 },
-  navChevronOff: { color: "#444" },
-  monthLabel: {
-    fontFamily: "PoppinsBold",
-    fontSize: 15,
-    color: "#AAA",
-    letterSpacing: 0.5,
-  },
-  nowLink: {
-    fontFamily: "Poppins",
-    fontSize: 12,
-    color: "#7DF9C2",
-    marginTop: 2,
-  },
-  title: { fontFamily: "PoppinsBold", fontSize: 40, color: "#F0F0F0", lineHeight: 46, marginBottom: 8 },
-  accountRow: {
-    flexDirection: "row",
+  monthNav: { flexDirection: "row", alignItems: "center", marginTop: 12, marginBottom: 12 },
+  monthCenter: { flex: 1, alignItems: "center" },
+  navButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 22,
-    gap: 12,
+    justifyContent: "center",
   },
-  accountEmail: { flex: 1, fontFamily: "Poppins", fontSize: 13, color: "#666" },
-  logout: { fontFamily: "PoppinsBold", fontSize: 13, color: "#7DF9C2" },
-  balanceCard: {
-    backgroundColor: "#16161A",
-    borderRadius: 20,
-    padding: 24,
-    marginBottom: 12,
+  navButtonDisabled: { opacity: 0.25 },
+  monthLabel: { color: theme.color.text, fontFamily: "PoppinsBold", fontSize: 14 },
+  currentLabel: { color: theme.color.textSubtle, fontFamily: "Poppins", fontSize: 10, marginTop: 1 },
+  nowLink: { color: theme.color.accent, fontFamily: "Poppins", fontSize: 10, marginTop: 1 },
+  allowanceCard: {
+    backgroundColor: theme.color.surface,
+    borderRadius: theme.radius.large,
     borderWidth: 1,
-    borderColor: "#222",
-  },
-  balanceLabel: {
-    fontFamily: "Poppins",
-    fontSize: 13,
-    color: "#666",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    marginBottom: 4,
-  },
-  balanceAmount: { fontFamily: "PoppinsBold", fontSize: 38, color: "#F0F0F0", marginBottom: 16 },
-  rolloverCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#0D2A1F",
-    borderRadius: 16,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    borderWidth: 1,
-    borderColor: "#1A4A38",
-    marginBottom: 10,
-    gap: 12,
-  },
-  rolloverCardNeg: {
-    backgroundColor: "#2A1515",
-    borderColor: "#4A1A1A",
-  },
-  rolloverCopy: { flex: 1 },
-  rolloverKicker: {
-    fontFamily: "PoppinsBold",
-    fontSize: 14,
-    color: "#F0F0F0",
-    marginBottom: 2,
-  },
-  rolloverHint: { fontFamily: "Poppins", fontSize: 12, color: "#888" },
-  rolloverAmt: { fontFamily: "PoppinsBold", fontSize: 22 },
-  availableLine: {
-    fontFamily: "Poppins",
-    fontSize: 13,
-    color: "#888",
+    borderColor: theme.color.border,
+    padding: 18,
     marginBottom: 28,
-    paddingHorizontal: 4,
   },
-  availableLineSolo: {
-    fontFamily: "Poppins",
-    fontSize: 13,
-    color: "#888",
-    marginBottom: 28,
-    marginTop: 4,
-    paddingHorizontal: 4,
-  },
-  progressLabels: { flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
-  progressText: { fontFamily: "Poppins", fontSize: 13, color: "#666" },
-  sectionTitle: {
-    fontFamily: "PoppinsBold",
-    fontSize: 16,
-    color: "#444",
-    letterSpacing: 2,
-    textTransform: "uppercase",
-    marginBottom: 14,
-  },
-  bucketsRow: { flexDirection: "row", gap: 10, marginBottom: 32 },
+  allowanceHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 },
+  allowanceLabel: { color: theme.color.textMuted, fontFamily: "PoppinsBold", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase" },
+  allowanceAmount: { color: theme.color.text, fontFamily: "PoppinsBold", fontSize: 30, lineHeight: 38 },
+  statusPill: { backgroundColor: "#123025", borderRadius: theme.radius.pill, paddingVertical: 6, paddingHorizontal: 10 },
+  statusPillOver: { backgroundColor: "#321A1D" },
+  statusText: { color: theme.color.positive, fontFamily: "PoppinsBold", fontSize: 11 },
+  statusTextOver: { color: theme.color.negative },
+  allowanceFooter: { flexDirection: "row", justifyContent: "space-between", marginTop: 9 },
+  allowanceMeta: { color: theme.color.textMuted, fontFamily: "Poppins", fontSize: 11 },
+  rolloverText: { color: theme.color.textSubtle, fontFamily: "Poppins", fontSize: 10, marginTop: 8 },
+  sectionHeader: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 12 },
+  sectionTitle: { color: theme.color.text, fontFamily: "PoppinsBold", fontSize: 18 },
+  sectionSubtitle: { color: theme.color.textSubtle, fontFamily: "Poppins", fontSize: 10 },
+  bucketStack: { gap: 10, marginBottom: 28 },
   bucketCard: {
-    flex: 1,
-    backgroundColor: "#16161A",
-    borderRadius: 16,
-    padding: 14,
-    borderTopWidth: 3,
+    backgroundColor: theme.color.surface,
+    borderRadius: theme.radius.medium,
     borderWidth: 1,
-    borderColor: "#222",
-  },
-  bucketLabel: { fontFamily: "PoppinsBold", fontSize: 12, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 },
-  bucketTarget: { fontFamily: "PoppinsBold", fontSize: 16, color: "#F0F0F0", marginBottom: 10 },
-  bucketRemaining: { fontFamily: "Poppins", fontSize: 11, color: "#555", marginTop: 6 },
-  breakdownGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 24 },
-  breakdownItem: {
-    width: "47%",
-    backgroundColor: "#16161A",
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#222",
+    borderColor: theme.color.borderSoft,
+    padding: 15,
     overflow: "hidden",
   },
-  breakdownAccent: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-  },
-  breakdownEmoji: { fontSize: 22, marginBottom: 6 },
-  breakdownLabel: { fontFamily: "Poppins", fontSize: 12, color: "#666", marginBottom: 2 },
-  breakdownAmount: { fontFamily: "PoppinsBold", fontSize: 18, color: "#F0F0F0" },
-  errorTitle: {
-    fontFamily: "PoppinsBold",
-    fontSize: 20,
-    color: "#F0F0F0",
-    textAlign: "center",
-    marginBottom: 8,
-    paddingHorizontal: 24,
-  },
-  error: {
-    color: "#FF6B6B",
-    fontFamily: "Poppins",
-    fontSize: 14,
-    textAlign: "center",
-    marginTop: 12,
-    paddingHorizontal: 24,
-  },
-  retryHint: {
-    color: "#555",
-    fontFamily: "Poppins",
-    fontSize: 13,
-    textAlign: "center",
-    marginTop: 16,
-  },
+  bucketAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3 },
+  bucketHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 11 },
+  bucketLabel: { fontFamily: "PoppinsBold", fontSize: 13, textTransform: "uppercase", letterSpacing: 1 },
+  bucketAllocation: { color: theme.color.textMuted, fontFamily: "Poppins", fontSize: 11, marginTop: 2 },
+  bucketRight: { alignItems: "flex-end" },
+  bucketRemaining: { color: theme.color.text, fontFamily: "PoppinsBold", fontSize: 14 },
+  bucketSpent: { color: theme.color.textSubtle, fontFamily: "Poppins", fontSize: 10, marginTop: 1 },
+  negative: { color: theme.color.negative },
+  categoryStack: { gap: 10, marginBottom: 24 },
+  errorTitle: { color: theme.color.text, fontFamily: "PoppinsBold", fontSize: 20, textAlign: "center" },
+  error: { color: theme.color.negative, fontFamily: "Poppins", fontSize: 13, textAlign: "center", marginTop: 16 },
+  retryHint: { color: theme.color.textSubtle, fontFamily: "Poppins", fontSize: 12 },
 });

@@ -24,3 +24,33 @@ export const Colors = {
     tabIconSelected: tintColorDark,
   },
 };
+
+export const BudgetTheme = {
+  color: {
+    background: '#0D0D0F',
+    surface: '#16161A',
+    surfaceRaised: '#1B1B20',
+    border: '#27272D',
+    borderSoft: '#202025',
+    text: '#F4F4F5',
+    textMuted: '#92929D',
+    textSubtle: '#5F5F69',
+    accent: '#7DF9C2',
+    positive: '#7DF9C2',
+    warning: '#FFD166',
+    negative: '#FF6B6B',
+  },
+  radius: {
+    small: 12,
+    medium: 16,
+    large: 22,
+    pill: 999,
+  },
+  spacing: {
+    xs: 6,
+    sm: 10,
+    md: 16,
+    lg: 24,
+    xl: 32,
+  },
+} as const;

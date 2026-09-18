@@ -7,24 +7,27 @@ import {
   StyleSheet,
   Animated,
   ActivityIndicator,
-  Platform,
 } from "react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import * as Haptics from "expo-haptics";
 import Reanimated, { FadeIn, FadeOut, ZoomIn } from "react-native-reanimated";
-import { useTransaction } from "@/hooks/useTransaction";
+import { useTransaction, type EntryType } from "@/hooks/useTransaction";
 import { useBudget } from "@/hooks/useBudget";
-import { CATEGORIES, CATEGORY_BY_COL, NEEDS_KEYS, WANTS_KEYS } from "@/constants/categories";
-import { fmt, formatDate } from "@/utils/format";
+import { CATEGORIES, CATEGORY_BY_COL } from "@/constants/categories";
+import { fmt, formatDate, addDays, isSameDay, startOfDay } from "@/utils/format";
 import { AmbientGlow, FadeSlideIn, PressScale } from "@/components/motion";
+import { CalendarPicker } from "@/components/CalendarPicker";
+import { CategoryIcon } from "@/components/CategoryIcon";
 
-const QUICK = [5, 10, 15, 25, 50];
+const SPEND_QUICK = [5, 10, 15, 25, 50];
+const INCOME_QUICK = [250, 500, 1000, 1500, 2000];
 
 export default function AddScreen() {
   const {
     amount, setAmount,
     selectedCategory, setSelectedCategory,
     date, setDate,
+    note, setNote,
+    entryType, setEntryType,
     loading,
     status,
     shakeAnim,
@@ -33,30 +36,38 @@ export default function AddScreen() {
   } = useTransaction();
   const { data } = useBudget();
 
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const cat = selectedCategory ? CATEGORY_BY_COL[selectedCategory] : null;
   const parsed = parseFloat(amount);
   const hasAmount = !isNaN(parsed) && parsed > 0;
+  const isIncome = entryType === "income";
+  const quick = isIncome ? INCOME_QUICK : SPEND_QUICK;
+  const glow = isIncome ? "#7DF9C2" : (cat?.color ?? "#7DF9C2");
+
+  const switchType = (next: EntryType) => {
+    Haptics.selectionAsync().catch(() => {});
+    setEntryType(next);
+    if (next === "income") setSelectedCategory(null);
+  };
 
   const preview = useMemo(() => {
-    if (!cat || !data) return null;
+    if (!data || !hasAmount) return null;
+    if (isIncome) {
+      const current = data.remaining;
+      return { kind: "income" as const, current, next: current + parsed * 0.8 };
+    }
+    if (!cat) return null;
     const spent = (data.breakdown as Record<string, number>)[cat.key] ?? 0;
-    const bucketKeys = cat.bucket === "needs" ? NEEDS_KEYS : WANTS_KEYS;
-    const bucketSpent = bucketKeys.reduce(
-      (s, k) => s + ((data.breakdown as Record<string, number>)[k] ?? 0),
-      0
-    );
-    const bucketTarget = cat.bucket === "needs" ? data.budget503020.needs : data.budget503020.wants;
-    const add = hasAmount ? parsed : 0;
+    const bucket = cat.bucket === "needs" ? data.buckets?.needs : data.buckets?.wants;
+    const bucketRemaining = bucket?.remaining ?? 0;
     return {
+      kind: "spend" as const,
       spent,
-      next: spent + add,
+      next: spent + parsed,
       bucketLabel: cat.bucket === "needs" ? "Needs" : "Wants",
-      bucketSpent,
-      bucketTarget,
-      bucketNext: bucketSpent + add,
+      bucketRemaining,
+      bucketNext: bucketRemaining - parsed,
     };
-  }, [cat, data, hasAmount, parsed]);
+  }, [cat, data, hasAmount, parsed, isIncome]);
 
   return (
     <ScrollView
@@ -64,12 +75,31 @@ export default function AddScreen() {
       contentContainerStyle={styles.container}
       keyboardShouldPersistTaps="handled"
     >
-      <AmbientGlow color={cat?.color ?? "#7DF9C2"} intensity="strong" />
+      <AmbientGlow color={glow} intensity="strong" />
 
       <FadeSlideIn delay={0}>
         <View style={styles.header}>
-          <Text style={styles.eyebrow}>New Entry</Text>
+          <Text style={styles.eyebrow}>{isIncome ? "New Income" : "New Entry"}</Text>
           <Text style={styles.title}>Add</Text>
+        </View>
+      </FadeSlideIn>
+
+      <FadeSlideIn delay={40}>
+        <View style={styles.typeRow}>
+          <PressScale
+            scaleTo={0.96}
+            onPress={() => switchType("spend")}
+            style={[styles.typeChip, !isIncome && styles.typeChipOn]}
+          >
+            <Text style={[styles.typeText, !isIncome && styles.typeTextOn]}>Purchase</Text>
+          </PressScale>
+          <PressScale
+            scaleTo={0.96}
+            onPress={() => switchType("income")}
+            style={[styles.typeChip, isIncome && styles.typeChipOn]}
+          >
+            <Text style={[styles.typeText, isIncome && styles.typeTextOn]}>Income</Text>
+          </PressScale>
         </View>
       </FadeSlideIn>
 
@@ -83,8 +113,8 @@ export default function AddScreen() {
 
       <FadeSlideIn delay={80}>
         <Animated.View style={{ transform: [{ translateX: shakeAnim }] }}>
-          <View style={[styles.amountContainer, cat && { borderColor: cat.color }]}>
-            <Text style={[styles.currencySymbol, cat && { color: cat.color }]}>$</Text>
+          <View style={[styles.amountContainer, (cat || isIncome) && { borderColor: glow }]}>
+            <Text style={[styles.currencySymbol, (cat || isIncome) && { color: glow }]}>$</Text>
             <TextInput
               style={styles.amountInput}
               value={amount}
@@ -97,7 +127,7 @@ export default function AddScreen() {
           </View>
         </Animated.View>
         <View style={styles.quickRow}>
-          {QUICK.map((n) => (
+          {quick.map((n) => (
             <PressScale
               key={n}
               scaleTo={0.92}
@@ -116,66 +146,63 @@ export default function AddScreen() {
       </FadeSlideIn>
 
       <FadeSlideIn delay={140}>
-        <PressScale
-          onPress={() => setShowDatePicker(!showDatePicker)}
-          style={styles.dateButton}
-        >
-          <Text style={styles.dateButtonEmoji}>📅</Text>
-          <Text style={styles.dateButtonText}>{formatDate(date)}</Text>
-          <Text style={styles.dateChevron}>›</Text>
-        </PressScale>
+        <Text style={styles.sectionLabel}>Day</Text>
+        <DayPicker date={date} onChange={setDate} />
       </FadeSlideIn>
 
-      {showDatePicker && (
-        <Reanimated.View entering={FadeIn.duration(280)} exiting={FadeOut.duration(180)}>
-          <DateTimePicker
-            value={date}
-            mode="date"
-            display={Platform.OS === "ios" ? "spinner" : "default"}
-            onChange={(event, selected) => {
-              setShowDatePicker(Platform.OS === "ios");
-              if (selected) setDate(selected);
-            }}
-            themeVariant="dark"
-            maximumDate={new Date()}
-          />
-        </Reanimated.View>
+      <FadeSlideIn delay={180}>
+        <Text style={styles.sectionLabel}>Note</Text>
+        <TextInput
+          style={styles.noteInput}
+          value={note}
+          onChangeText={setNote}
+          placeholder="Optional — saved as a comment on the cell"
+          placeholderTextColor="#444"
+          selectionColor="#7DF9C2"
+          multiline
+          maxLength={500}
+        />
+      </FadeSlideIn>
+
+      {!isIncome && (
+        <FadeSlideIn delay={200}>
+          <Text style={styles.sectionLabel}>Category</Text>
+          <View style={styles.categoryGrid}>
+            {CATEGORIES.map((item) => {
+              const isSelected = selectedCategory === item.col;
+              return (
+                <PressScale
+                  key={item.col}
+                  scaleTo={0.96}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.label} category`}
+                  accessibilityState={{ selected: isSelected }}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setSelectedCategory(item.col);
+                  }}
+                  style={[
+                    styles.categoryButton,
+                    isSelected && { borderColor: item.color, backgroundColor: `${item.color}18` },
+                  ]}
+                >
+                  <CategoryIcon name={item.icon} color={item.color} />
+                  <Text style={[styles.categoryLabel, isSelected && { color: item.color, fontFamily: "PoppinsBold" }]}>
+                    {item.label}
+                  </Text>
+                </PressScale>
+              );
+            })}
+          </View>
+        </FadeSlideIn>
       )}
 
-      <FadeSlideIn delay={200}>
-        <Text style={styles.sectionLabel}>Category</Text>
-        <View style={styles.categoryGrid}>
-          {CATEGORIES.map((item) => {
-            const isSelected = selectedCategory === item.col;
-            return (
-              <PressScale
-                key={item.col}
-                scaleTo={0.96}
-                onPress={() => {
-                  Haptics.selectionAsync().catch(() => {});
-                  setSelectedCategory(item.col);
-                }}
-                style={[
-                  styles.categoryButton,
-                  isSelected && { borderColor: item.color, backgroundColor: `${item.color}18` },
-                ]}
-              >
-                <Text style={styles.categoryEmoji}>{item.emoji}</Text>
-                <Text style={[styles.categoryLabel, isSelected && { color: item.color, fontFamily: "PoppinsBold" }]}>
-                  {item.label}
-                </Text>
-              </PressScale>
-            );
-          })}
-        </View>
-      </FadeSlideIn>
-
-      {preview && cat && (
+      {preview && preview.kind === "spend" && cat && (
         <Reanimated.View
           entering={FadeIn.duration(280)}
           style={[styles.preview, { borderColor: cat.color }]}
         >
-          <Text style={styles.previewEmoji}>{cat.emoji}</Text>
+          <CategoryIcon name={cat.icon} color={cat.color} />
           <View style={styles.previewCopy}>
             <Text style={styles.previewTitle}>{cat.label} this month</Text>
             <Text style={styles.previewLine}>
@@ -183,7 +210,23 @@ export default function AddScreen() {
               {hasAmount ? `  →  ${fmt(preview.next)}` : ""}
             </Text>
             <Text style={styles.previewBucket}>
-              {preview.bucketLabel} {fmt(preview.bucketNext)} of {fmt(preview.bucketTarget)}
+              {preview.bucketLabel} left {fmt(preview.bucketRemaining)}
+              {hasAmount ? `  →  ${fmt(preview.bucketNext)}` : ""}
+            </Text>
+          </View>
+        </Reanimated.View>
+      )}
+
+      {preview && preview.kind === "income" && (
+        <Reanimated.View
+          entering={FadeIn.duration(280)}
+          style={[styles.preview, { borderColor: "#7DF9C2" }]}
+        >
+          <CategoryIcon name="account-balance-wallet" color="#7DF9C2" />
+          <View style={styles.previewCopy}>
+            <Text style={styles.previewTitle}>Left after 50 / 30 / 20</Text>
+            <Text style={styles.previewLine}>
+              {fmt(preview.current)}  →  {fmt(preview.next)}
             </Text>
           </View>
         </Reanimated.View>
@@ -202,18 +245,81 @@ export default function AddScreen() {
         <PressScale
           onPress={submit}
           disabled={loading}
-          style={[styles.submitButton, cat && { backgroundColor: cat.color }]}
+          style={[styles.submitButton, (cat || isIncome) && { backgroundColor: glow }]}
         >
           {loading
             ? <ActivityIndicator color="#0D0D0F" />
             : <Text style={styles.submitLabel}>
-                {hasAmount && cat ? `Add ${fmt(parsed)} to ${cat.label}` : "Add Transaction"}
+                {hasAmount && isIncome
+                  ? `Add ${fmt(parsed)} income`
+                  : hasAmount && cat
+                    ? `Add ${fmt(parsed)} to ${cat.label}`
+                    : isIncome
+                      ? "Add Income"
+                      : "Add Transaction"}
               </Text>
           }
         </PressScale>
       </FadeSlideIn>
 
     </ScrollView>
+  );
+}
+
+function DayPicker({
+  date,
+  onChange,
+}: {
+  date: Date;
+  onChange: (d: Date) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const today = startOfDay(new Date());
+  const selected = startOfDay(date);
+  const isToday = isSameDay(selected, today);
+  const yesterday = addDays(today, -1);
+
+  const pick = (d: Date) => {
+    Haptics.selectionAsync().catch(() => {});
+    onChange(startOfDay(d));
+    setOpen(false);
+  };
+
+  return (
+    <View style={styles.dayWrap}>
+      <PressScale
+        onPress={() => {
+          Haptics.selectionAsync().catch(() => {});
+          setOpen((v) => !v);
+        }}
+        style={[styles.dayCenter, open && styles.dayCenterOn]}
+      >
+        <View style={styles.dayCenterRow}>
+          <Text style={styles.dateButtonEmoji}>📅</Text>
+          <Text style={styles.dateButtonText}>{formatDate(selected)}</Text>
+          <Text style={[styles.dateChevron, open && styles.dateChevronOn]}>{open ? "⌃" : "›"}</Text>
+        </View>
+      </PressScale>
+
+      <View style={styles.dayChips}>
+        {!isSameDay(selected, yesterday) && (
+          <PressScale onPress={() => pick(yesterday)} style={styles.dayChip}>
+            <Text style={styles.dayChipText}>Yesterday</Text>
+          </PressScale>
+        )}
+        {!isToday && (
+          <PressScale onPress={() => pick(today)} style={[styles.dayChip, styles.dayChipOn]}>
+            <Text style={[styles.dayChipText, styles.dayChipTextOn]}>Today</Text>
+          </PressScale>
+        )}
+      </View>
+
+      {open && (
+        <Reanimated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(160)}>
+          <CalendarPicker date={selected} onChange={pick} maximumDate={today} />
+        </Reanimated.View>
+      )}
+    </View>
   );
 }
 
@@ -229,6 +335,19 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   title: { fontFamily: "PoppinsBold", fontSize: 40, color: "#F0F0F0", lineHeight: 46 },
+  typeRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
+  typeChip: {
+    flex: 1,
+    backgroundColor: "#16161A",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#222",
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  typeChipOn: { borderColor: "#7DF9C2", backgroundColor: "#0D2A1F" },
+  typeText: { fontFamily: "PoppinsBold", fontSize: 13, color: "#888" },
+  typeTextOn: { color: "#7DF9C2" },
   lastChip: {
     alignSelf: "flex-start",
     backgroundColor: "#16161A",
@@ -266,21 +385,51 @@ const styles = StyleSheet.create({
   quickChipOn: { borderColor: "#7DF9C2", backgroundColor: "#0D2A1F" },
   quickText: { fontFamily: "PoppinsBold", fontSize: 13, color: "#888" },
   quickTextOn: { color: "#7DF9C2" },
-  dateButton: {
+  dayWrap: { marginBottom: 20 },
+  dayCenter: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#16161A",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#222",
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    marginBottom: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     gap: 10,
+    marginBottom: 10,
   },
+  dayCenterOn: { borderColor: "#7DF9C2" },
+  dayCenterRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   dateButtonEmoji: { fontSize: 18 },
   dateButtonText: { flex: 1, fontFamily: "Poppins", fontSize: 15, color: "#AAA" },
-  dateChevron: { fontSize: 22, color: "#444" },
+  dateChevron: { fontSize: 22, color: "#444", marginTop: -2 },
+  dateChevronOn: { color: "#7DF9C2" },
+  dayChips: { flexDirection: "row", gap: 8, marginBottom: 8 },
+  dayChip: {
+    backgroundColor: "#16161A",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#222",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  dayChipOn: { borderColor: "#7DF9C2", backgroundColor: "#0D2A1F" },
+  dayChipText: { fontFamily: "PoppinsBold", fontSize: 12, color: "#888" },
+  dayChipTextOn: { color: "#7DF9C2" },
+  noteInput: {
+    backgroundColor: "#16161A",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#222",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    color: "#F0F0F0",
+    fontFamily: "Poppins",
+    fontSize: 15,
+    minHeight: 72,
+    textAlignVertical: "top",
+    marginBottom: 24,
+  },
   sectionLabel: {
     fontFamily: "PoppinsBold",
     fontSize: 13,
@@ -300,7 +449,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  categoryEmoji: { fontSize: 26 },
   categoryLabel: { fontFamily: "Poppins", fontSize: 13, color: "#666" },
   preview: {
     flexDirection: "row",
@@ -312,7 +460,6 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
   },
-  previewEmoji: { fontSize: 28 },
   previewCopy: { flex: 1 },
   previewTitle: { fontFamily: "Poppins", fontSize: 12, color: "#888", marginBottom: 2 },
   previewLine: { fontFamily: "PoppinsBold", fontSize: 16, color: "#F0F0F0" },

@@ -4,6 +4,7 @@ import Animated, {
   Easing,
   interpolate,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withRepeat,
   withTiming,
@@ -53,22 +54,31 @@ type Props = {
 export function AreaChart({ months, seriesKey, color, activeMonthIndex, onSelectMonth }: Props) {
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(0);
+  const reduceMotion = useReducedMotion();
   const pulse = useSharedValue(0);
   const reveal = useSharedValue(0);
 
   useEffect(() => {
+    if (reduceMotion) {
+      pulse.value = 0;
+      return;
+    }
     pulse.value = withRepeat(
       withTiming(1, { duration: 1600, easing: Easing.inOut(Easing.sin) }),
       -1,
       true
     );
-  }, [pulse]);
+  }, [pulse, reduceMotion]);
 
   const seriesId = `${seriesKey}:${months.map((m) => m.key).join(",")}`;
   useEffect(() => {
+    if (reduceMotion) {
+      reveal.value = 1;
+      return;
+    }
     reveal.value = 0;
     reveal.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
-  }, [reveal, seriesId]);
+  }, [reduceMotion, reveal, seriesId]);
 
   const glowStyle = useAnimatedStyle(() => ({
     opacity: interpolate(pulse.value, [0, 1], [0.25, 0.7]),

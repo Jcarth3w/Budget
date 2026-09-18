@@ -28,6 +28,14 @@ export type BudgetBreakdown = {
   groceries: number;
 };
 
+export type BucketProgress = {
+  allocated: number;
+  spent: number;
+  rollover: number;
+  available: number;
+  remaining: number;
+};
+
 export type BudgetData = {
   year: number;
   month: number;
@@ -38,11 +46,17 @@ export type BudgetData = {
   rolloverFrom?: { month: number; year: number; label: string };
   available: number;
   remaining: number;
+  spreadsheetUrl?: string;
   breakdown: BudgetBreakdown;
   budget503020: {
     needs: number;
     wants: number;
     investments: number;
+  };
+  buckets?: {
+    needs: BucketProgress;
+    wants: BucketProgress;
+    investments: BucketProgress;
   };
   previousMonth?: {
     earned: number;
@@ -87,6 +101,7 @@ export function useBudget(view?: { month: number; year: number }) {
           wants: available * 0.3,
           investments: available * 0.2,
         },
+        buckets: json.buckets,
       });
       setError(null);
     } catch (err: any) {

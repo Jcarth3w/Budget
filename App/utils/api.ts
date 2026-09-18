@@ -18,10 +18,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiFetch<T = Record<string, unknown>>(
-  path: string,
-  init: RequestInit = {}
-): Promise<T> {
+export async function apiFetch<T = Record<string, unknown>>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getToken();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);

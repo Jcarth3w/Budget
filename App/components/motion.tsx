@@ -1,10 +1,11 @@
 import React, { useEffect } from "react";
-import { Pressable, StyleProp, ViewStyle } from "react-native";
+import { Pressable, type PressableProps, StyleProp, ViewStyle } from "react-native";
 import Animated, {
   Easing,
   FadeInDown,
   interpolate,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withRepeat,
   withSpring,
@@ -24,9 +25,10 @@ export function FadeSlideIn({
   duration?: number;
   style?: StyleProp<ViewStyle>;
 }) {
+  const reduceMotion = useReducedMotion();
   return (
     <Animated.View
-      entering={FadeInDown.delay(delay).duration(duration).easing(enterEase)}
+      entering={reduceMotion ? undefined : FadeInDown.delay(delay).duration(duration).easing(enterEase)}
       style={style}
     >
       {children}
@@ -40,13 +42,15 @@ export function PressScale({
   disabled,
   style,
   scaleTo = 0.97,
+  ...pressableProps
 }: {
   children: React.ReactNode;
   onPress?: () => void;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
   scaleTo?: number;
-}) {
+} & Omit<PressableProps, "children" | "disabled" | "onPress" | "style">) {
+  const reduceMotion = useReducedMotion();
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -54,12 +58,15 @@ export function PressScale({
 
   return (
     <Pressable
+      {...pressableProps}
       disabled={disabled}
       onPress={onPress}
       onPressIn={() => {
+        if (reduceMotion) return;
         scale.value = withSpring(scaleTo, { damping: 16, stiffness: 420 });
       }}
       onPressOut={() => {
+        if (reduceMotion) return;
         scale.value = withSpring(1, { damping: 14, stiffness: 280 });
       }}
       style={style}
@@ -79,16 +86,21 @@ export function AmbientGlow({
   style?: StyleProp<ViewStyle>;
   intensity?: "soft" | "strong";
 }) {
+  const reduceMotion = useReducedMotion();
   const pulse = useSharedValue(0);
   const strong = intensity === "strong";
 
   useEffect(() => {
+    if (reduceMotion) {
+      pulse.value = 0;
+      return;
+    }
     pulse.value = withRepeat(
       withTiming(1, { duration: strong ? 2800 : 4200, easing: Easing.inOut(Easing.sin) }),
       -1,
       true
     );
-  }, [pulse, strong]);
+  }, [pulse, reduceMotion, strong]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: interpolate(pulse.value, [0, 1], strong ? [0.12, 0.26] : [0.045, 0.09]),

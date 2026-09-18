@@ -1,5 +1,21 @@
 {
-  "dependencies": {
-    "expo": "^53.0.11"
+  "name": "budget",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:backend && npm run test:app",
+    "test:backend": "node --test Tests/Backend/utils/parseTools.test.js",
+    "test:app": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "npm run coverage:backend && npm run coverage:app",
+    "coverage:backend": "c8 --reports-dir Tests/coverage/Backend --temp-directory Tests/coverage/.tmp --reporter=text --reporter=html node --test Tests/Backend/utils/parseTools.test.js",
+    "coverage:app": "vitest run --coverage",
+    "lint": "npm --prefix App run lint",
+    "typecheck": "npm --prefix App run typecheck"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^5.0.1",
+    "c8": "^12.0.0",
+    "vitest": "^5.0.1"
   }
 }

@@ -1,16 +1,27 @@
 import { createLogger } from '../utils/logger.js';
-import { getSheets, SHEET_ID, SHEET_NAME } from './Auth/sheetsConnection.js';
+import { getSheets, SHEET_ID, SHEET_NAME, getSpreadsheetUrl } from './Auth/sheetsConnection.js';
 import {
   parseSheetDate,
-  roundMoney,
   breakdownFromTotals,
-  getPreviousCalendarMonth,
-  aggregateMonthFromRows,
+  chainMonthsThrough,
+  emptySpendingTotals,
 } from '../utils/parseTools.js';
 
 const baseLog = createLogger('services:reads');
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function rolloverRangeLabel(first, last) {
+  if (!first || !last) return 'previous months';
+  if (first.year === last.year && first.month === last.month) {
+    return MONTH_SHORT[last.month];
+  }
+  const from =
+    first.year === last.year
+      ? MONTH_SHORT[first.month]
+      : `${MONTH_SHORT[first.month]} ${first.year}`;
+  return `${from}–${MONTH_SHORT[last.month]}`;
+}
 
 // Reads all rows from the sheet and returns:
 // - rows: raw 2D array
@@ -40,7 +51,7 @@ export async function getSheetRows({ log = baseLog } = {}) {
   return { rows, dateRowMap };
 }
 
-// Returns monthly totals (with previous-month rollover).
+// Returns monthly totals with leftover chained from every earlier month in the sheet.
 // `month` is 0-based; omit month/year to use the current calendar month.
 export async function getMonthlyData({ log = baseLog, month, year } = {}) {
   const scoped = log.child ? log.child('getMonthlyData') : log;
@@ -52,21 +63,25 @@ export async function getMonthlyData({ log = baseLog, month, year } = {}) {
     const now = new Date();
     const currentMonth = Number.isInteger(month) ? month : now.getMonth();
     const currentYear = Number.isInteger(year) ? year : now.getFullYear();
-    const prev = getPreviousCalendarMonth(currentMonth, currentYear);
     const isCurrent = currentMonth === now.getMonth() && currentYear === now.getFullYear();
+
+    const { months: chained } = chainMonthsThrough(rows, currentMonth, currentYear);
+    const current = chained[chained.length - 1];
+    const previous = chained.length > 1 ? chained[chained.length - 2] : null;
+    const first = chained[0];
+    const rollover = current.rollover;
+    const available = current.available;
+    const remaining = current.remaining;
 
     scoped.debug('Filtering rows for month', {
       month: currentMonth + 1,
       year: currentYear,
       isCurrent,
-      rolloverFrom: { month: prev.month + 1, year: prev.year },
+      chainedMonths: chained.length,
+      rolloverFrom: previous
+        ? { month: previous.month + 1, year: previous.year }
+        : null,
     });
-
-    const current = aggregateMonthFromRows(rows, currentMonth, currentYear);
-    const previous = aggregateMonthFromRows(rows, prev.month, prev.year);
-    const rollover = previous.remaining;
-    const available = roundMoney(current.earned + rollover);
-    const remaining = roundMoney(available - current.spent);
 
     scoped.info('Aggregated month rows', {
       matchingRows: current.matchingRows,
@@ -84,24 +99,38 @@ export async function getMonthlyData({ log = baseLog, month, year } = {}) {
       earned: current.earned,
       spent: current.spent,
       rollover,
-      rolloverFrom: {
-        month: prev.month + 1,
-        year: prev.year,
-        label: MONTH_SHORT[prev.month],
-      },
+      rolloverFrom: previous
+        ? {
+            month: previous.month + 1,
+            year: previous.year,
+            label: rolloverRangeLabel(first, previous),
+          }
+        : {
+            month: currentMonth,
+            year: currentYear,
+            label: 'previous months',
+          },
       available,
       remaining,
+      spreadsheetUrl: getSpreadsheetUrl(),
       breakdown: breakdownFromTotals(current.totals),
       budget503020: {
-        needs: roundMoney(available * 0.5),
-        wants: roundMoney(available * 0.3),
-        investments: roundMoney(available * 0.2),
+        needs: current.needs.available,
+        wants: current.wants.available,
+        investments: current.investments.available,
       },
-      previousMonth: {
-        earned: previous.earned,
-        spent: previous.spent,
-        remaining: previous.remaining,
+      buckets: {
+        needs: current.needs,
+        wants: current.wants,
+        investments: current.investments,
       },
+      previousMonth: previous
+        ? {
+            earned: previous.earned,
+            spent: previous.spent,
+            remaining: previous.remaining,
+          }
+        : undefined,
     };
 
     scoped.debug('Returning monthly data', result);
@@ -123,22 +152,29 @@ export async function getTrendsData({ log = baseLog, monthCount = 12 } = {}) {
   try {
     const { rows } = await getSheetRows({ log: scoped });
     const now = new Date();
+    const { months: chained } = chainMonthsThrough(rows, now.getMonth(), now.getFullYear());
+    const byKey = new Map(chained.map((m) => [`${m.year}-${m.month}`, m]));
     const months = [];
 
     for (let i = count - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const month = d.getMonth();
       const year = d.getFullYear();
-      const agg = aggregateMonthFromRows(rows, month, year);
+      const agg = byKey.get(`${year}-${month}`);
       months.push({
         year,
         month: month + 1,
         key: `${year}-${String(month + 1).padStart(2, '0')}`,
         label: MONTH_SHORT[month],
-        earned: agg.earned,
-        spent: agg.spent,
-        remaining: agg.remaining,
-        breakdown: breakdownFromTotals(agg.totals),
+        earned: agg?.earned ?? 0,
+        spent: agg?.spent ?? 0,
+        remaining: agg?.remaining ?? 0,
+        breakdown: breakdownFromTotals(agg?.totals ?? emptySpendingTotals()),
+        buckets: {
+          needs: agg?.needs ?? { allocated: 0, spent: 0, rollover: 0, available: 0, remaining: 0 },
+          wants: agg?.wants ?? { allocated: 0, spent: 0, rollover: 0, available: 0, remaining: 0 },
+          investments: agg?.investments ?? { allocated: 0, spent: 0, rollover: 0, available: 0, remaining: 0 },
+        },
       });
     }
 

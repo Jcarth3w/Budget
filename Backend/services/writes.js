@@ -5,14 +5,78 @@ import { getSheetRows } from './reads.js';
 
 const baseLog = createLogger('services:writes');
 
+let cachedTabSheetId;
+
+async function getTabSheetId(sheets, log) {
+  if (cachedTabSheetId != null) return cachedTabSheetId;
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId: SHEET_ID,
+    fields: 'sheets.properties(sheetId,title)',
+  });
+  const match = (meta.data.sheets || []).find((s) => s.properties?.title === SHEET_NAME);
+  if (!match) {
+    throw new Error(`Sheet tab "${SHEET_NAME}" not found`);
+  }
+  cachedTabSheetId = match.properties.sheetId;
+  log.debug('Resolved sheet tab id', { sheetName: SHEET_NAME, sheetId: cachedTabSheetId });
+  return cachedTabSheetId;
+}
+
+async function readCellNote(sheets, category, rowNumber) {
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId: SHEET_ID,
+    ranges: [`${SHEET_NAME}!${category}${rowNumber}`],
+    fields: 'sheets.data.rowData.values.note',
+  });
+  return response.data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0]?.note || '';
+}
+
+function formatNoteLine(amount, note) {
+  const dollars = `$${Number(amount).toFixed(2)}`;
+  const text = String(note || '').trim();
+  return text ? `${dollars} — ${text}` : dollars;
+}
+
+async function appendCellNote({ sheets, category, rowNumber, amount, note, log }) {
+  const tabId = await getTabSheetId(sheets, log);
+  const existing = await readCellNote(sheets, category, rowNumber);
+  const line = formatNoteLine(amount, note);
+  const next = existing ? `${existing}\n${line}` : line;
+  const colIndex = colLetterToIndex(category);
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      requests: [
+        {
+          updateCells: {
+            range: {
+              sheetId: tabId,
+              startRowIndex: rowNumber - 1,
+              endRowIndex: rowNumber,
+              startColumnIndex: colIndex,
+              endColumnIndex: colIndex + 1,
+            },
+            rows: [{ values: [{ note: next }] }],
+            fields: 'note',
+          },
+        },
+      ],
+    },
+  });
+
+  log.info('Cell note updated', { cell: `${category}${rowNumber}` });
+}
+
 // Writes a single transaction additively into the correct cell
-// { amount: 12.50, category: 'H', date: Date }
-export async function writeTransaction({ amount, category, date, log = baseLog }) {
+// { amount: 12.50, category: 'H', date: Date, note?: string }
+export async function writeTransaction({ amount, category, date, note, log = baseLog }) {
   const scoped = log.child ? log.child('writeTransaction') : log;
   scoped.debug('Starting transaction write', {
     amount,
     category,
     date: date instanceof Date ? date.toISOString() : date,
+    hasNote: Boolean(note),
   });
 
   const sheets = await getSheets(scoped);
@@ -52,12 +116,31 @@ export async function writeTransaction({ amount, category, date, log = baseLog }
     newValue,
   });
 
+  let noteWritten = false;
+  const trimmedNote = typeof note === 'string' ? note.trim() : '';
+  if (trimmedNote) {
+    try {
+      await appendCellNote({
+        sheets,
+        category,
+        rowNumber,
+        amount,
+        note: trimmedNote,
+        log: scoped,
+      });
+      noteWritten = true;
+    } catch (err) {
+      scoped.error('Failed to write cell note', { message: err.message, stack: err.stack });
+    }
+  }
+
   return {
     date: dateKey,
     category,
     added: amount,
     previousValue: existing,
     newValue,
+    noteWritten,
   };
 }
 

@@ -1,7 +1,13 @@
 import React, { useEffect } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
-import Animated, { Easing, useAnimatedProps, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, {
+  Easing,
+  useAnimatedProps,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { CATEGORIES } from "@/constants/categories";
 import { fmt } from "@/utils/format";
 import type { BudgetBreakdown } from "@/hooks/useBudget";
@@ -33,11 +39,16 @@ function Arc({
   cx: number;
   dimmed: boolean;
 }) {
+  const reduceMotion = useReducedMotion();
   const progress = useSharedValue(0);
   useEffect(() => {
+    if (reduceMotion) {
+      progress.value = 1;
+      return;
+    }
     progress.value = 0;
     progress.value = withTiming(1, { duration: 900, easing: Easing.out(Easing.cubic) });
-  }, [progress, length, offset]);
+  }, [progress, length, offset, reduceMotion]);
 
   const animatedProps = useAnimatedProps(() => ({
     strokeDasharray: `${progress.value * length} ${circ}`,

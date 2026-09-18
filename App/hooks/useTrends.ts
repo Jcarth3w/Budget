@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch } from "@/utils/api";
-import { subscribeBudgetChanged, type BudgetBreakdown } from "@/hooks/useBudget";
+import {
+  subscribeBudgetChanged,
+  type BudgetBreakdown,
+  type BucketProgress,
+} from "@/hooks/useBudget";
 
 export type MonthTrend = {
   year: number;
@@ -12,6 +16,11 @@ export type MonthTrend = {
   spent: number;
   remaining: number;
   breakdown: BudgetBreakdown;
+  buckets: {
+    needs: BucketProgress;
+    wants: BucketProgress;
+    investments: BucketProgress;
+  };
 };
 
 export type TrendsData = {
@@ -43,6 +52,11 @@ export function useTrends() {
             car: 0,
             apartment: 0,
             groceries: 0,
+          },
+          buckets: m.buckets ?? {
+            needs: { allocated: 0, spent: 0, rollover: 0, available: 0, remaining: 0 },
+            wants: { allocated: 0, spent: 0, rollover: 0, available: 0, remaining: 0 },
+            investments: { allocated: 0, spent: 0, rollover: 0, available: 0, remaining: 0 },
           },
         })),
       });

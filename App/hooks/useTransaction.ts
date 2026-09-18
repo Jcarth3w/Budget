@@ -3,11 +3,16 @@ import { Animated } from "react-native";
 import { apiFetch } from "@/utils/api";
 import { CATEGORY_BY_COL } from "../constants/categories";
 import { notifyBudgetChanged } from "./useBudget";
+import { toDateOnly } from "@/utils/format";
+
+export type EntryType = "spend" | "income";
 
 export function useTransaction() {
   const [amount, setAmount] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [date, setDate] = useState(new Date());
+  const [note, setNote] = useState("");
+  const [entryType, setEntryType] = useState<EntryType>("spend");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{
     type: "success" | "error";
@@ -43,16 +48,16 @@ export function useTransaction() {
     setAmount("");
     setSelectedCategory(null);
     setDate(new Date());
+    setNote("");
   }, []);
 
   const submit = useCallback(async () => {
-    // Validate
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
       shake();
       setStatus({ type: "error", message: "Enter a valid amount." });
       return;
     }
-    if (!selectedCategory) {
+    if (entryType === "spend" && !selectedCategory) {
       shake();
       setStatus({ type: "error", message: "Pick a category." });
       return;
@@ -62,19 +67,29 @@ export function useTransaction() {
     setStatus(null);
 
     try {
-      await apiFetch("/transaction", {
+      const result = await apiFetch<{ noteWritten?: boolean }>("/transaction", {
         method: "POST",
         body: JSON.stringify({
           amount: parseFloat(amount),
-          category: selectedCategory,
-          date: date.toISOString(),
+          category: entryType === "income" ? "D" : selectedCategory,
+          type: entryType,
+          date: toDateOnly(date),
+          note: note.trim() || undefined,
         }),
       });
 
-      const categoryLabel = CATEGORY_BY_COL[selectedCategory]?.label ?? selectedCategory;
+      const categoryLabel =
+        entryType === "income"
+          ? "Income"
+          : CATEGORY_BY_COL[selectedCategory ?? ""]?.label ?? selectedCategory;
       const parsed = parseFloat(amount);
-      setLastAdded({ amount: parsed, label: categoryLabel });
-      showSuccess(`$${parsed.toFixed(2)} added to ${categoryLabel}`);
+      setLastAdded({ amount: parsed, label: categoryLabel ?? "entry" });
+      const noteFailed = Boolean(note.trim()) && result.noteWritten === false;
+      showSuccess(
+        noteFailed
+          ? `$${parsed.toFixed(2)} added to ${categoryLabel}, but the note didn’t save`
+          : `$${parsed.toFixed(2)} added to ${categoryLabel}`
+      );
       notifyBudgetChanged();
       reset();
     } catch (err: any) {
@@ -82,12 +97,14 @@ export function useTransaction() {
     } finally {
       setLoading(false);
     }
-  }, [amount, selectedCategory, date, shake, showSuccess, reset]);
+  }, [amount, selectedCategory, date, note, entryType, shake, showSuccess, reset]);
 
   return {
     amount, setAmount,
     selectedCategory, setSelectedCategory,
     date, setDate,
+    note, setNote,
+    entryType, setEntryType,
     loading,
     status,
     shakeAnim,
