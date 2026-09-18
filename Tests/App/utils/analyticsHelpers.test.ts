@@ -33,22 +33,54 @@ function month(monthNumber: number, food: number, gas: number): MonthTrend {
   };
 }
 
-describe("analytics helpers", () => {
-  const months = [month(1, 50, 25), month(2, 80, 20)];
+const months = [month(1, 50, 25), month(2, 80, 20)];
 
-  it("ranks selected-month categories with share and delta", () => {
-    const rows = selectedMonthRows(months, 1);
-    expect(rows[0]).toMatchObject({ amount: 80, delta: 30, share: 0.8 });
-    expect(rows[0].category.key).toBe("food");
+describe("selectedMonthRows", () => {
+  it("sorts categories by amount", () => {
+    expect(selectedMonthRows(months, 1)[0].category.key).toBe("food");
   });
 
-  it("builds category series and trailing averages", () => {
-    expect(categorySeries(months, "gas")).toEqual([25, 20]);
-    expect(trailingAverage([10, 20, 30, 40], 3)).toBe(30);
-    expect(trailingAverage([])).toBe(0);
+  it("returns current amounts", () => {
+    expect(selectedMonthRows(months, 1)[0].amount).toBe(80);
   });
 
-  it("handles a missing month", () => {
+  it("calculates previous-month change", () => {
+    expect(selectedMonthRows(months, 1)[0].delta).toBe(30);
+  });
+
+  it("calculates monthly spending share", () => {
+    expect(selectedMonthRows(months, 1)[0].share).toBe(0.8);
+  });
+
+  it("returns no rows for a missing month", () => {
     expect(selectedMonthRows(months, 99)).toEqual([]);
+  });
+
+  it("uses a zero baseline for the first month", () => {
+    expect(selectedMonthRows(months, 0)[0].delta).toBe(50);
+  });
+});
+
+describe("categorySeries", () => {
+  it("returns one value per month", () => {
+    expect(categorySeries(months, "gas")).toEqual([25, 20]);
+  });
+
+  it("returns zeros for an unknown category", () => {
+    expect(categorySeries(months, "unknown")).toEqual([0, 0]);
+  });
+});
+
+describe("trailingAverage", () => {
+  it("averages the requested trailing window", () => {
+    expect(trailingAverage([10, 20, 30, 40], 3)).toBe(30);
+  });
+
+  it("uses all values when the window is larger", () => {
+    expect(trailingAverage([10, 20], 3)).toBe(15);
+  });
+
+  it("returns zero for no values", () => {
+    expect(trailingAverage([])).toBe(0);
   });
 });

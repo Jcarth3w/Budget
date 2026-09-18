@@ -65,7 +65,7 @@ function trend(month: number, food: number): MonthTrend {
   };
 }
 
-describe("budget insights", () => {
+describe("buildBudgetInsights", () => {
   it("prioritizes an overall overspend warning", () => {
     const result = buildBudgetInsights(
       budget({ remaining: -75, spent: 875 }),
@@ -84,7 +84,37 @@ describe("budget insights", () => {
     expect(result.some((insight) => insight.id === "pace-2026-09")).toBe(true);
   });
 
-  it("flags a category only with enough meaningful history", () => {
+  it("warns when needs exceed their allocation", () => {
+    const result = buildBudgetInsights(
+      budget({
+        buckets: {
+          needs: bucket(500, 550),
+          wants: bucket(300, 100),
+          investments: bucket(200, 0),
+        },
+      }),
+      [],
+      new Date(2026, 8, 12),
+    );
+    expect(result.some((insight) => insight.id === "needs-over-2026-09")).toBe(true);
+  });
+
+  it("warns when wants exceed their allocation", () => {
+    const result = buildBudgetInsights(
+      budget({
+        buckets: {
+          needs: bucket(500, 200),
+          wants: bucket(300, 350),
+          investments: bucket(200, 0),
+        },
+      }),
+      [],
+      new Date(2026, 8, 12),
+    );
+    expect(result.some((insight) => insight.id === "wants-over-2026-09")).toBe(true);
+  });
+
+  it("flags a category with meaningful history", () => {
     const current = budget({
       breakdown: { ...zeroBreakdown(), food: 160 },
       spent: 160,
@@ -95,7 +125,39 @@ describe("budget insights", () => {
     expect(result.some((insight) => insight.id === "spike-food-2026-09")).toBe(true);
   });
 
-  it("returns a calm status when no warning or tip applies", () => {
+  it("ignores spikes with sparse history", () => {
+    const current = budget({
+      breakdown: { ...zeroBreakdown(), food: 160 },
+      spent: 160,
+      remaining: 640,
+    });
+    const result = buildBudgetInsights(
+      current,
+      [trend(8, 90), trend(9, 160)],
+      new Date(2026, 8, 12),
+    );
+    expect(result.some((insight) => insight.id.startsWith("spike-food"))).toBe(false);
+  });
+
+  it("suggests saving a late-month surplus", () => {
+    const result = buildBudgetInsights(
+      budget(),
+      [],
+      new Date(2026, 8, 25),
+    );
+    expect(result.some((insight) => insight.id === "surplus-2026-09")).toBe(true);
+  });
+
+  it("does not project pace for a past month", () => {
+    const result = buildBudgetInsights(
+      budget({ spent: 700, remaining: 100 }),
+      [],
+      new Date(2026, 9, 10),
+    );
+    expect(result.some((insight) => insight.id.startsWith("pace-"))).toBe(false);
+  });
+
+  it("returns a calm status without signals", () => {
     const result = buildBudgetInsights(
       budget({ isCurrent: false }),
       [],
